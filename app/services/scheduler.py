@@ -10,6 +10,7 @@ from app.services.alerts.maintenance_state import process_maintenance_lifecycle
 from app.services.alerts.shelving import process_due_shelves
 from app.services.alerts.reminders import send_unacked_reminders
 from app.services.db_lock import acquire_db_lock, release_db_lock
+from app.services.metrics import record_worker_heartbeat
 from app.services.notifications.shift_notifications import (
     send_due_oncall_shift_email_notifications,
     send_due_oncall_shift_mattermost_notifications,
@@ -475,6 +476,15 @@ def retention_cleanup_job():
             db.close()
 
 
+def scheduler_heartbeat_job():
+    """Refresh the scheduler heartbeat used by /metrics."""
+    return {
+        "heartbeat": 1
+        if record_worker_heartbeat("scheduler", min_interval_seconds=0)
+        else 0,
+    }
+
+
 def silence_lifecycle_job():
     """Apply scheduled Silences and reactivate alerts after Silence expiry."""
     if db.is_closed():
@@ -800,6 +810,19 @@ def start_scheduler():
         id="shelve_lifecycle_job",
         replace_existing=True,
     )
+
+    if Config.METRICS_ENABLED:
+        # Only the /metrics heartbeat gauge reads this row.
+        _scheduler.add_job(
+            scheduler_heartbeat_job,
+            "interval",
+            seconds=int(getattr(Config, "SCHEDULER_HEARTBEAT_INTERVAL_SECONDS", 30)),
+            max_instances=1,
+            coalesce=True,
+            next_run_time=utc_now(),
+            id="scheduler_heartbeat_job",
+            replace_existing=True,
+        )
 
     _scheduler.add_job(
         maintenance_lifecycle_job,

@@ -1,6 +1,6 @@
 <script src="/static/js/pages/dashboard.js"></script>
 <link rel="stylesheet" href="{{ url_for('static', filename='css/overview.css') }}">
-<div class="first-div-page-layout page-stack">
+<div class="first-div-page-layout page-stack dashboard-page">
   <section class="card dashboard-filters-card" aria-label="{{ _('overview.filters.title') }}">
     <div class="dashboard-filters">
       <label class="dashboard-filter-field">
@@ -52,7 +52,6 @@
     </div>
   </section>
 
-<div class="first-div-page-layout page-stack dashboard-page">
   {% set summary_id = "overview-alerts-summary" %}
   {% include 'pages/include/alerts_summary_grid.html' %}
 
@@ -162,19 +161,6 @@
         </a>
       </div>
 
-        <div class="card dashboard-list-card">
-            <div class="card-header">
-                <div>
-                    <h2>{{ _('overview.recent.title') }}</h2>
-                    <div class="card-subtitle">
-                        {{ _('overview.recent.subtitle') }}
-                    </div>
-                </div>
-
-                <a href="/alerts" class="btn btn-small" data-dashboard-view-all>
-                    {{ _('overview.actions.view_all') }}
-                </a>
-            </div>
       <div id="dashboard-service-impact" class="dashboard-list"></div>
     </div>
 

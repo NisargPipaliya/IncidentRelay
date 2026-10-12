@@ -42,6 +42,8 @@ nav:
       - Escalation Policies: concepts/escalation-policies.md
   - Incident Management:
       - Overview: incidents/index.md
+      - API migration 2.3: incidents/api-migration-2.3.md
+      - 2.3 Release Notes: incidents/release-notes-2.3.md
       - Alerts and Alert Groups: usage/alerts.md
       - Incident Priorities: incidents/priorities.md
       - Incident Responders: incidents/responders.md
@@ -67,6 +69,7 @@ nav:
           - Alertmanager: integrations/alertmanager.md
           - New Relic: integrations/new-relic.md
           - Azure Monitor: integrations/azure-monitor.md
+          - Cloud.ru: integrations/cloud-ru.md
           - Nagios: integrations/nagios.md
           - Zabbix: integrations/zabbix.md
           - Sentry: integrations/sentry.md

@@ -1732,6 +1732,96 @@ class AlertRouteChannel(BaseModel):
         )
 
 
+class Incident(BaseModel):
+    """First-class operational incident, independent from AlertGroup lifecycle."""
+
+    id = AutoField()
+    team = ForeignKeyField(
+        Team,
+        null=True,
+        backref="incidents",
+        on_delete="SET NULL",
+    )
+    service = ForeignKeyField(
+        Service,
+        null=True,
+        backref="incidents",
+        on_delete="SET NULL",
+    )
+    priority = ForeignKeyField(
+        IncidentPriority,
+        null=True,
+        backref="incidents",
+        on_delete="SET NULL",
+    )
+    assignee = ForeignKeyField(
+        User,
+        null=True,
+        backref="assigned_incidents",
+        on_delete="SET NULL",
+    )
+
+    workflow_status = CharField(default="declared", index=True)
+    title = CharField()
+    description = TextField(null=True)
+    summary = TextField(null=True)
+    root_cause = TextField(null=True)
+    resolution_summary = TextField(null=True)
+
+    declared_by = ForeignKeyField(
+        User,
+        null=True,
+        backref="declared_incidents",
+        on_delete="SET NULL",
+    )
+    declared_at = DateTimeField(default=utc_now, index=True)
+    investigation_started_at = DateTimeField(null=True)
+    identified_at = DateTimeField(null=True)
+    monitoring_at = DateTimeField(null=True)
+    resolved_at = DateTimeField(null=True, index=True)
+    closed_by = ForeignKeyField(
+        User,
+        null=True,
+        backref="closed_incidents",
+        on_delete="SET NULL",
+    )
+    closed_at = DateTimeField(null=True, index=True)
+
+    # Incremented by service-layer compare-and-swap updates.
+    row_version = IntegerField(default=1)
+    created_at = DateTimeField(default=utc_now)
+    updated_at = DateTimeField(default=utc_now, index=True)
+
+    class Meta:
+        table_name = "incident"
+        indexes = (
+            (("team", "workflow_status"), False),
+            (("service", "workflow_status"), False),
+            (("assignee", "workflow_status"), False),
+            (("priority", "workflow_status"), False),
+            (("workflow_status", "updated_at"), False),
+        )
+
+
+class IncidentEvent(BaseModel):
+    """Immutable operational timeline event for a first-class Incident."""
+
+    id = AutoField()
+    incident = ForeignKeyField(Incident, backref="events", on_delete="CASCADE")
+    event_type = CharField(index=True)
+    user = ForeignKeyField(User, null=True, backref="incident_events", on_delete="SET NULL")
+    message = TextField(null=True)
+    data = JSONTextField(default=dict)
+    created_at = DateTimeField(default=utc_now, index=True)
+
+    class Meta:
+        table_name = "incident_event"
+        indexes = (
+            (("incident", "created_at"), False),
+            (("incident", "event_type"), False),
+        )
+
+
 class AlertGroup(BaseModel):
     """Logical incident/group containing one or more concrete alerts."""
 
@@ -1773,7 +1863,7 @@ class AlertGroup(BaseModel):
     group_key_hash = CharField(index=True)
     group_key = TextField()
 
-    title = CharField()
+    title = TextField()
     message = TextField(null=True)
     severity = CharField(null=True)
 
@@ -1878,6 +1968,45 @@ class AlertGroup(BaseModel):
         )
 
 
+class IncidentAlertGroupLink(BaseModel):
+    """Historical, non-destructive link between Incident and AlertGroup."""
+
+    id = AutoField()
+    incident = ForeignKeyField(
+        Incident,
+        backref="alert_group_links",
+        on_delete="CASCADE",
+    )
+    alert_group = ForeignKeyField(
+        AlertGroup,
+        backref="incident_links",
+        on_delete="CASCADE",
+    )
+    relation_type = CharField(default="related", index=True)
+    linked_by = ForeignKeyField(
+        User,
+        null=True,
+        backref="created_incident_alert_group_links",
+        on_delete="SET NULL",
+    )
+    linked_at = DateTimeField(default=utc_now, index=True)
+    removed_by = ForeignKeyField(
+        User,
+        null=True,
+        backref="removed_incident_alert_group_links",
+        on_delete="SET NULL",
+    )
+    removed_at = DateTimeField(null=True, index=True)
+
+    class Meta:
+        table_name = "incident_alert_group_link"
+        indexes = (
+            (("incident", "alert_group"), False),
+            (("incident", "removed_at"), False),
+            (("alert_group", "removed_at"), False),
+        )
+
+
 class AlertGroupShelve(BaseModel):
     """Operator-controlled temporary suppression for one alert group."""
 
@@ -1949,10 +2078,10 @@ class Alert(BaseModel):
     escalation_repeat_count = IntegerField(default=0)
     assignee = ForeignKeyField(User, null=True, backref="assigned_alerts", on_delete="SET NULL")
     source = CharField()
-    external_id = CharField(null=True)
+    external_id = TextField(null=True)
     dedup_key = CharField(index=True)
-    group_key = CharField(index=True)
-    title = CharField()
+    group_key = TextField()
+    title = TextField()
     message = TextField(null=True)
     severity = CharField(null=True)
     priority = ForeignKeyField(
@@ -2001,7 +2130,6 @@ class Alert(BaseModel):
         indexes = (
             (("team", "status"), False),
             (("source", "dedup_key"), False),
-            (("group_key", "status"), False),
             (("status", "resolved_at"), False),
         )
 

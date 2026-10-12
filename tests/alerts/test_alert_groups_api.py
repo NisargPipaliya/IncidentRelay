@@ -125,7 +125,7 @@ def test_alerts_api_returns_groups(client, admin_headers, db):
 
 
     response = client.get(
-        "/api/alerts",
+        "/api/alert-groups",
         headers=admin_headers,
     )
 
@@ -153,7 +153,7 @@ def test_alert_group_details_include_child_alerts(client, admin_headers, db):
     upsert_alert(_alert(route, "DiskFull", "host2"))
 
     response = client.get(
-        f"/api/alerts/{group1.id}",
+        f"/api/alert-groups/{group1.id}",
         headers=admin_headers,
     )
 
@@ -172,6 +172,42 @@ def test_alert_group_details_include_child_alerts(client, admin_headers, db):
     }
 
     assert child_instances == {"host1", "host2"}
+
+
+def test_alert_group_acknowledge_uses_2_3_contract_path(
+    client,
+    admin_headers,
+    db,
+):
+    route = _route(group_by=["alertname", "severity"])
+    result = upsert_alert(_alert(route, "DiskFull", "host1"))
+
+    response = client.post(
+        f"/api/alert-groups/{result.group.id}/acknowledge",
+        headers=admin_headers,
+    )
+
+    assert response.status_code == 200
+    assert response.get_json()["status"] == "acknowledged"
+
+
+def test_alert_group_merge_uses_2_3_contract_path(client, admin_headers, db):
+    route = _route(group_by=["alertname", "severity", "instance"])
+    target = upsert_alert(_alert(route, "DiskFull", "host1")).group
+    source = upsert_alert(_alert(route, "DiskFull", "host2")).group
+
+    response = client.post(
+        f"/api/alert-groups/{target.id}/merge",
+        headers=admin_headers,
+        json={
+            "source_group_ids": [source.id],
+            "reason": "same incident",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.get_json()["id"] == target.id
+    assert AlertGroup.get_by_id(source.id).status == "merged"
 
 
 def test_empty_group_by_uses_dedup_key_instead_of_default_labels(db):
@@ -560,7 +596,7 @@ def test_alert_event_endpoint_supports_paginated_response(client, admin_headers,
         )
 
     response = client.get(
-        f"/api/alerts/{group.id}/events?page=1&page_size=25",
+        f"/api/alert-groups/{group.id}/events?page=1&page_size=25",
         headers=admin_headers,
     )
 
@@ -578,7 +614,7 @@ def test_alert_event_endpoint_preserves_legacy_array_response(client, admin_head
     result = upsert_alert(_alert(route, "DiskFull", "host1"))
 
     response = client.get(
-        f"/api/alerts/{result.group.id}/events",
+        f"/api/alert-groups/{result.group.id}/events",
         headers=admin_headers,
     )
 
@@ -599,7 +635,7 @@ def test_alert_group_details_bound_initial_event_history(client, admin_headers, 
         )
 
     response = client.get(
-        f"/api/alerts/{group.id}?events_page=1&events_page_size=50",
+        f"/api/alert-groups/{group.id}?events_page=1&events_page_size=50",
         headers=admin_headers,
     )
 
@@ -608,3 +644,59 @@ def test_alert_group_details_bound_initial_event_history(client, admin_headers, 
     assert len(payload["events"]) == 50
     assert payload["events_pagination"]["has_next"] is True
     assert payload["events"][0]["id"] > payload["events"][-1]["id"]
+
+
+def test_alert_group_activity_returns_recent_meaningful_events(client, admin_headers, db):
+    route = _route(group_by=["alertname", "severity"])
+    group = upsert_alert(_alert(route, "DiskFull", "host1")).group
+
+    alerts_repo.create_alert_event(
+        group_id=group.id,
+        event_type="acknowledged",
+        message="Alert group acknowledged",
+    )
+    alerts_repo.create_alert_event(
+        group_id=group.id,
+        event_type="notification_sent",
+        message="Noisy delivery event",
+    )
+
+    response = client.get(
+        "/api/alert-groups/activity?limit=10",
+        headers=admin_headers,
+    )
+
+    assert response.status_code == 200
+    items = response.get_json()["items"]
+    assert any(item["event_type"] == "acknowledged" for item in items)
+    assert all(item["event_type"] != "notification_sent" for item in items)
+
+    acknowledged = next(item for item in items if item["event_type"] == "acknowledged")
+    assert acknowledged["alert_group"]["id"] == group.id
+    assert acknowledged["alert_group"]["title"] == group.title
+
+
+def test_alert_group_activity_honors_team_filter(client, admin_headers, db):
+    group_one = create_group()
+    team_one = create_team(group_one)
+    route_one = create_route(team_one, source="webhook", group_by=["alertname"], matchers={})
+
+    group_two = create_group()
+    team_two = create_team(group_two)
+    route_two = create_route(team_two, source="webhook", group_by=["alertname"], matchers={})
+
+    first = upsert_alert(_alert(route_one, "DiskFullOne", "host1")).group
+    second = upsert_alert(_alert(route_two, "DiskFullTwo", "host2")).group
+
+    alerts_repo.create_alert_event(group_id=first.id, event_type="acknowledged", message="first")
+    alerts_repo.create_alert_event(group_id=second.id, event_type="acknowledged", message="second")
+
+    response = client.get(
+        f"/api/alert-groups/activity?team_id={team_one.id}&limit=10",
+        headers=admin_headers,
+    )
+
+    assert response.status_code == 200
+    items = response.get_json()["items"]
+    assert items
+    assert {item["alert_group"]["team_id"] for item in items} == {team_one.id}

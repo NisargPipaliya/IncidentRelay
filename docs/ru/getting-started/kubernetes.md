@@ -124,6 +124,47 @@ existingConfigSecret: incidentrelay-config
 !!! note "Примечание"
     Чарт добавляет к pod'ам аннотацию `checksum/config`, чтобы при изменении конфигурации они перезапускались автоматически. При использовании `existingConfigSecret` чарт не видит его содержимое, поэтому аннотация не добавляется — после изменения Secret перезапустите pod'ы самостоятельно.
 
+### Секреты из существующих Secret и файлов
+
+Чтобы не хранить учётные данные в `values.yaml`, возьмите любой параметр из Secret, ConfigMap или файла через `configFrom`. Ключи имеют вид `<секция>.<параметр>`, а в каждой записи задаётся ровно один из `secretKeyRef`, `configMapKeyRef` или `file`:
+
+```yaml
+configFrom:
+  main.secret_key:
+    secretKeyRef:
+      name: incidentrelay-secrets
+      key: secret-key
+  database.password:
+    secretKeyRef:
+      name: incidentrelay-db
+      key: password
+  smtp.password:
+    file: /mnt/secrets-store/smtp-password
+```
+
+Чарт передаёт их всем компонентам как переменные окружения `INCIDENTRELAY__<SECTION>__<OPTION>`, которые имеют приоритет над `incidentrelay.conf` (см. [Переопределение через переменные окружения](configuration.md#переопределение-через-переменные-окружения)). Если `main.secret_key` задан через `configFrom`, указывать его в `config` больше не нужно, а пустые общие ключи (`main.secret_encryption_key`, `auth.jwt_secret`, `mattermost.action_secret`, `voice.callback_secret`) берут его значение — в том числе с `existingConfigSecret`, — поэтому во всех pod'ах ключи одинаковые. Не задавайте один и тот же параметр одновременно в `configFrom` и в `extraEnv` компонента: в Deployment не может быть одной и той же переменной дважды, поэтому чарт откажется его рендерить.
+
+`file` работает с любым томом, смонтированным в pod'ы, например с [Secrets Store CSI Driver](https://secrets-store-csi-driver.sigs.k8s.io/) и `SecretProviderClass` для AWS Systems Manager Parameter Store, Secrets Manager или Vault:
+
+```yaml
+extraVolumes:
+  - name: secrets-store
+    csi:
+      driver: secrets-store.csi.k8s.io
+      readOnly: true
+      volumeAttributes:
+        secretProviderClass: incidentrelay
+extraVolumeMounts:
+  - name: secrets-store
+    mountPath: /mnt/secrets-store
+    readOnly: true
+```
+
+Доступ pod'ов к облачному провайдеру настраивается через `serviceAccount.annotations`, например с помощью IAM-ролей для service account в EKS.
+
+!!! note "Примечание"
+    Pod'ы не перезапускаются при изменении Secret или файла, на которые ссылается `configFrom`. После смены значения перезапустите их.
+
 ## База данных
 
 ### SQLite (по умолчанию)
@@ -167,6 +208,8 @@ persistence:
   enabled: false
 ```
 
+Чтобы не хранить пароль в `values.yaml`, задайте `database.password` через [`configFrom`](#секреты-из-существующих-secret-и-файлов).
+
 ## Миграции и масштабирование веб-компонента
 
 По умолчанию веб-pod запускает миграции в entrypoint перед запуском Gunicorn:
@@ -203,6 +246,55 @@ web:
 ```
 
 Startup-проба даёт первому запуску до пяти минут — этого достаточно для выполнения миграций на новой базе данных.
+
+## Метрики
+
+Веб-компонент умеет отдавать метрики Prometheus по адресу `/metrics` (см. [Секция metrics](configuration.md#секция-metrics)). Включите эндпоинт в конфигурации и закройте его токеном из Secret:
+
+```bash
+kubectl create secret generic incidentrelay-metrics \
+  --namespace incidentrelay \
+  --from-literal=token="$(openssl rand -hex 32)"
+```
+
+```yaml
+config:
+  metrics:
+    enabled: true
+configFrom:
+  metrics.auth_token:
+    secretKeyRef:
+      name: incidentrelay-metrics
+      key: token
+```
+
+Включайте метрики через `config` или `configFrom`, а не только через `web.extraEnv`: эту настройку читают и планировщик, и воркеры чатов, а планировщик записывает heartbeat, только пока метрики включены.
+
+Если используется Prometheus Operator, чарт может создать ServiceMonitor, который собирает метрики с веб-Service. Токен он берёт из того же Secret, из которого его берёт веб-pod: через `secretKeyRef` в `configFrom` или в `web.extraEnv`:
+
+```yaml
+serviceMonitor:
+  enabled: true
+  interval: 30s
+  labels:
+    release: kube-prometheus-stack  # лейблы, по которым ваш Prometheus выбирает ServiceMonitor
+```
+
+Если чарт не может определить, в каком Secret хранится токен, например с `existingConfigSecret`, токеном из файла или заданным открытым текстом, укажите ServiceMonitor ключ Secret, в котором он хранится:
+
+```yaml
+serviceMonitor:
+  enabled: true
+  bearerTokenSecret:
+    name: incidentrelay-metrics
+    key: token
+```
+
+Кроме того, Prometheus должен искать ServiceMonitor в namespace, куда установлен IncidentRelay: лейблы выше проверяются только его `serviceMonitorSelector`, а в каких namespace искать, решает `serviceMonitorNamespaceSelector`.
+
+Чарт не создаст ServiceMonitor, который точно не сможет собирать метрики: если метрики выключены в `config.metrics.enabled` или переменной `INCIDENTRELAY__METRICS__ENABLED` в `web.extraEnv`, если задан `metrics.auth_token`, но чарт не может определить, в каком Secret он хранится, или если `bearerTokenSecret` указывает не на тот Secret, который использует веб-pod. Проверка не всеобъемлющая: значения из Secret, ConfigMap, файлов и `existingConfigSecret` чарту не видны, поэтому успешный сбор метрик она не гарантирует.
+
+`/metrics` отдаёт только веб-pod, поэтому счётчики, которые пишут планировщик и воркеры чатов, не собираются; метрики, которые вычисляются из базы данных, собираются. Каждый pod хранит файлы счётчиков в собственном `emptyDir` в `/var/lib/incidentrelay/metrics`, поэтому несколько веб-реплик не делят их между собой.
 
 ## Доступ
 

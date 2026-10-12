@@ -1,8 +1,27 @@
 import json
 import configparser
+import os
 from pathlib import Path
 
 from app.config import CONFIG_FILE
+
+
+# Any option can be overridden from the environment, which takes precedence
+# over the config file:
+#   INCIDENTRELAY__<SECTION>__<OPTION>=value
+#   INCIDENTRELAY__<SECTION>__<OPTION>__FILE=/path/to/file
+# The __FILE form reads the value from a file, e.g. a mounted Kubernetes
+# Secret or a Secrets Store CSI volume, so secrets never have to be written
+# into incidentrelay.conf.
+ENV_OVERRIDE_PREFIX = "INCIDENTRELAY__"
+ENV_OVERRIDE_FILE_SUFFIX = "__FILE"
+
+
+def env_override_name(section, option):
+    """
+    Return the environment variable name that overrides a config option.
+    """
+    return f"{ENV_OVERRIDE_PREFIX}{section}__{option}".upper()
 
 
 class _CaseSensitiveConfigParser(configparser.ConfigParser):
@@ -14,23 +33,48 @@ class _CaseSensitiveConfigParser(configparser.ConfigParser):
 
 class Settings:
     """
-    Load service settings from an INI configuration file.
+    Load service settings from an INI configuration file and environment
+    overrides.
     """
 
-    def __init__(self, path=None):
+    def __init__(self, path=None, environ=None):
         """
         Initialize settings from a config file path.
         """
         self.path = Path(path or CONFIG_FILE)
         self.parser = _CaseSensitiveConfigParser()
+        self.environ = os.environ if environ is None else environ
 
         if self.path.exists():
             self.parser.read(self.path)
+
+    def _env_override(self, name):
+        """
+        Return the value of an override variable, or None when it is not set.
+        """
+        file_name = name + ENV_OVERRIDE_FILE_SUFFIX
+
+        if name in self.environ and file_name in self.environ:
+            raise RuntimeError(f"both {name} and {file_name} are set; use only one of them")
+
+        if file_name in self.environ:
+            path = self.environ[file_name]
+            try:
+                # Secret files often end with a newline that is not part of the value.
+                return Path(path).read_text(encoding="utf-8").rstrip("\r\n")
+            except OSError as exc:
+                raise RuntimeError(f"cannot read {file_name}={path}: {exc}") from exc
+
+        return self.environ.get(name)
 
     def get(self, section, option, default=None):
         """
         Return a string setting value.
         """
+        override = self._env_override(env_override_name(section, option))
+        if override is not None:
+            return override
+
         if not self.parser.has_section(section):
             return default
 
@@ -66,7 +110,26 @@ class Settings:
         if not self.parser.has_section(section):
             return default or {}
 
-        return dict(self.parser.items(section))
+        values = dict(self.parser.items(section))
+        values.update(self._env_section_overrides(section, values))
+        return values
+
+    def _env_section_overrides(self, section, values):
+        """
+        Return environment overrides for the options of a section.
+
+        Like Grafana's GF_* variables, the environment only overrides options
+        that are present in the config file and never adds new ones, so every
+        option keeps the spelling it has in the file.
+        """
+        overrides = {}
+
+        for option in values:
+            override = self._env_override(env_override_name(section, option))
+            if override is not None:
+                overrides[option] = override
+
+        return overrides
 
     def get_json(self, section, option, default=None):
         """Return a JSON setting value."""
@@ -157,6 +220,9 @@ class Config:
         "auth", "login_account_block_seconds", 300
     )
 
+    METRICS_ENABLED = settings.get_bool("metrics", "enabled", False)
+    METRICS_AUTH_TOKEN = settings.get("metrics", "auth_token", "") or ""
+
     SECRET_ENCRYPTION_KEY = settings.get("main", "secret_encryption_key", SECRET_KEY) or SECRET_KEY
     SSO_SECRET_ENCRYPTION_KEY = settings.get("sso", "secret_encryption_key", SECRET_ENCRYPTION_KEY) or SECRET_ENCRYPTION_KEY
 
@@ -172,6 +238,9 @@ class Config:
     )
 
     SCHEDULER_LOCK_TTL_SECONDS = settings.get_int("scheduler", "lock_ttl_seconds", 120)
+    SCHEDULER_HEARTBEAT_INTERVAL_SECONDS = settings.get_int(
+        "scheduler", "heartbeat_interval_seconds", 30
+    )
     ORCHESTRATION_PENDING_CHECK_INTERVAL_SECONDS = settings.get_int(
         "orchestration", "pending_check_interval_seconds", 10
     )

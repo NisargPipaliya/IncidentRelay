@@ -9,6 +9,12 @@
   "common.install_app": "Installer l’application",
   "common.collapse_sidebar": "Réduire la barre latérale",
   "common.loading_oncall_status": "Chargement du statut d’astreinte...",
+  "common.loading": "Chargement...",
+  "common.updating": "Mise à jour...",
+  "nav.operations": "Opérations",
+  "nav.on_call": "Astreinte",
+  "nav.configuration": "Configuration",
+  "nav.policies": "Politiques",
   "nav.overview": "Vue d’ensemble",
   "nav.alerts": "Alertes",
   "nav.rotations": "Rotations",
@@ -85,5 +91,8 @@
   "pages.sso.title": "SSO",
   "pages.sso.subtitle": "Fournisseurs de connexion OIDC et SAML",
   "pages.login.title": "Connexion",
-  "pages.login.subtitle": "Authentification JWT"
+  "pages.login.subtitle": "Authentification JWT",
+  "nav.incidents": "Incidents",
+  "pages.incidents.title": "Incidents",
+  "pages.incidents.subtitle": "Incidents opérationnels et processus de réponse indépendant"
 }

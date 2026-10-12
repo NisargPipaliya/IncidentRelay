@@ -9,6 +9,12 @@
   "common.install_app": "Установить приложение",
   "common.collapse_sidebar": "Свернуть боковую панель",
   "common.loading_oncall_status": "Загрузка статуса дежурства...",
+  "common.loading": "Загрузка...",
+  "common.updating": "Обновление...",
+  "nav.operations": "Операции",
+  "nav.on_call": "Дежурства",
+  "nav.configuration": "Настройки",
+  "nav.policies": "Политики",
   "nav.overview": "Обзор",
   "nav.alerts": "Алерты",
   "nav.rotations": "Ротации",
@@ -85,5 +91,8 @@
   "pages.sso.title": "SSO",
   "pages.sso.subtitle": "Провайдеры входа OIDC и SAML",
   "pages.login.title": "Вход",
-  "pages.login.subtitle": "Аутентификация JWT"
+  "pages.login.subtitle": "Аутентификация JWT",
+  "nav.incidents": "Инциденты",
+  "pages.incidents.title": "Инциденты",
+  "pages.incidents.subtitle": "Операционные инциденты и независимый процесс реагирования"
 }

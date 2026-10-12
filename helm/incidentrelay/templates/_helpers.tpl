@@ -82,7 +82,10 @@ missing nested map.
 {{- if not .Values.existingConfigSecret -}}
 {{- $config := default (dict) .Values.config -}}
 {{- $main := default (dict) (get $config "main") -}}
-{{- $mainSecret := required "config.main.secret_key is required; set a unique random value or use existingConfigSecret" (get $main "secret_key") -}}
+{{- $mainSecret := default "" (get $main "secret_key") -}}
+{{- if and (not $mainSecret) (not (hasKey (default (dict) .Values.configFrom) "main.secret_key")) -}}
+{{- fail "config.main.secret_key is required; set a unique random value, take it from a Secret with configFrom, or use existingConfigSecret" -}}
+{{- end -}}
 {{- $knownInsecure := list "dev-secret-key" "change-me" "change-this-secret-key" "change-this-jwt-secret" "change-this-mattermost-action-secret" -}}
 {{- if has ($mainSecret | toString | trim) $knownInsecure -}}
 {{- fail "config.main.secret_key uses a known insecure default; set a unique cryptographically random value" -}}
@@ -114,6 +117,120 @@ missing nested map.
 {{- if and (eq $dbType "sqlite") (gt (int .Values.web.replicaCount) 1) -}}
 {{- fail "SQLite supports only web.replicaCount=1 in this chart; use PostgreSQL before scaling the web deployment" -}}
 {{- end -}}
+{{- end -}}
+{{- end }}
+
+{{/*
+Whether /metrics is enabled, as far as the chart can tell: "true", "false",
+or "unknown" when the value comes from outside the chart (a Secret, a
+ConfigMap, a file or existingConfigSecret). As in the application, an
+environment variable from web.extraEnv or configFrom wins over the config;
+configFromEnv rejects setting it in both.
+*/}}
+{{- define "incidentrelay.metricsEnabled" -}}
+{{- $truthy := list "1" "true" "yes" "y" "on" -}}
+{{- $result := "" -}}
+{{- range (default (list) .Values.web.extraEnv) -}}
+{{- if eq (toString .name) "INCIDENTRELAY__METRICS__ENABLED" -}}
+{{- if hasKey . "value" -}}
+{{- $result = ternary "true" "false" (has (toString .value | trim | lower) $truthy) -}}
+{{- else -}}
+{{- $result = "unknown" -}}
+{{- end -}}
+{{- else if eq (toString .name) "INCIDENTRELAY__METRICS__ENABLED__FILE" -}}
+{{- $result = "unknown" -}}
+{{- end -}}
+{{- end -}}
+{{- if not $result -}}
+{{- if or (hasKey (default (dict) .Values.configFrom) "metrics.enabled") .Values.existingConfigSecret -}}
+{{- $result = "unknown" -}}
+{{- else -}}
+{{- $metrics := default (dict) (get (default (dict) .Values.config) "metrics") -}}
+{{- $result = ternary "true" "false" (has (default "" (get $metrics "enabled") | toString | trim | lower) $truthy) -}}
+{{- end -}}
+{{- end -}}
+{{- $result -}}
+{{- end }}
+
+{{/*
+Where the web pod takes metrics.auth_token from, as YAML: an environment
+variable from web.extraEnv or configFrom wins over the config, and
+configFromEnv rejects setting it in both. A "secret" source carries the Secret key; for
+an "unknown" one the chart can't tell which Secret holds the token. Empty
+when no token is configured, as far as the chart can see.
+*/}}
+{{- define "incidentrelay.metricsTokenSource" -}}
+{{- $source := dict -}}
+{{- if not .Values.existingConfigSecret -}}
+{{- $metrics := default (dict) (get (default (dict) .Values.config) "metrics") -}}
+{{- if get $metrics "auth_token" -}}
+{{- $source = dict "kind" "unknown" "from" "config.metrics.auth_token" -}}
+{{- end -}}
+{{- end -}}
+{{- with get (default (dict) .Values.configFrom) "metrics.auth_token" -}}
+{{- if hasKey . "secretKeyRef" -}}
+{{- $source = dict "kind" "secret" "from" "configFrom.metrics.auth_token" "name" .secretKeyRef.name "key" .secretKeyRef.key -}}
+{{- else -}}
+{{- $source = dict "kind" "unknown" "from" "configFrom.metrics.auth_token" -}}
+{{- end -}}
+{{- end -}}
+{{- range (default (list) .Values.web.extraEnv) -}}
+{{- if eq (toString .name) "INCIDENTRELAY__METRICS__AUTH_TOKEN" -}}
+{{- $secretKeyRef := dig "valueFrom" "secretKeyRef" (dict) . -}}
+{{- if $secretKeyRef -}}
+{{- $source = dict "kind" "secret" "from" "web.extraEnv" "name" $secretKeyRef.name "key" $secretKeyRef.key -}}
+{{- else if and (hasKey . "value") (not .value) -}}
+{{- /* An empty value turns token authentication off. */ -}}
+{{- $source = dict -}}
+{{- else -}}
+{{- $source = dict "kind" "unknown" "from" "web.extraEnv" -}}
+{{- end -}}
+{{- else if eq (toString .name) "INCIDENTRELAY__METRICS__AUTH_TOKEN__FILE" -}}
+{{- $source = dict "kind" "unknown" "from" "web.extraEnv" -}}
+{{- end -}}
+{{- end -}}
+{{- with $source -}}
+{{- toYaml . -}}
+{{- end -}}
+{{- end }}
+
+{{/*
+The Secret key the ServiceMonitor sends as the bearer token, as YAML:
+serviceMonitor.bearerTokenSecret, or else the Secret the web pod takes
+metrics.auth_token from.
+*/}}
+{{- define "incidentrelay.serviceMonitorTokenSecret" -}}
+{{- $token := default (dict) .Values.serviceMonitor.bearerTokenSecret -}}
+{{- if not $token -}}
+{{- $source := include "incidentrelay.metricsTokenSource" . | fromYaml -}}
+{{- if eq (toString (get $source "kind")) "secret" -}}
+{{- $token = $source -}}
+{{- end -}}
+{{- end -}}
+{{- with $token -}}
+{{- toYaml (dict "name" .name "key" .key) -}}
+{{- end -}}
+{{- end }}
+
+{{/*
+Fail early when the ServiceMonitor can't scrape /metrics. This is
+best-effort: values from outside the chart can't be checked.
+*/}}
+{{- define "incidentrelay.validateServiceMonitor" -}}
+{{- $explicit := default (dict) .Values.serviceMonitor.bearerTokenSecret -}}
+{{- if and $explicit (not (and $explicit.name $explicit.key)) -}}
+{{- fail "serviceMonitor.bearerTokenSecret needs both name and key" -}}
+{{- end -}}
+{{- $source := include "incidentrelay.metricsTokenSource" . | fromYaml -}}
+{{- $kind := toString (get $source "kind") -}}
+{{- if and $explicit (eq $kind "secret") (or (ne (toString $explicit.name) (toString $source.name)) (ne (toString $explicit.key) (toString $source.key))) -}}
+{{- fail (printf "serviceMonitor.bearerTokenSecret differs from the Secret the web pod takes metrics.auth_token from (%s), so Prometheus would get 401; remove serviceMonitor.bearerTokenSecret, the ServiceMonitor reuses that Secret" $source.from) -}}
+{{- end -}}
+{{- if eq (include "incidentrelay.metricsEnabled" .) "false" -}}
+{{- fail "serviceMonitor.enabled needs the /metrics endpoint, but metrics are disabled; set config.metrics.enabled to true (an INCIDENTRELAY__METRICS__ENABLED variable in web.extraEnv takes precedence over it)" -}}
+{{- end -}}
+{{- if and (eq $kind "unknown") (not $explicit) -}}
+{{- fail (printf "/metrics requires metrics.auth_token, but the ServiceMonitor can't tell which Secret holds it (it comes from %s); take it from a Secret with secretKeyRef or set serviceMonitor.bearerTokenSecret" $source.from) -}}
 {{- end -}}
 {{- end }}
 
@@ -274,6 +391,52 @@ checksum/custom-ca: {{ printf "%s:%s" $existingConfigMap $key | sha256sum }}
 {{- end }}
 
 {{/*
+Environment variables that set config options from configFrom. The
+application reads INCIDENTRELAY__<SECTION>__<OPTION> (and the __FILE form)
+before incidentrelay.conf. When main.secret_key comes from here, the
+entrypoint leaves empty shared security keys empty and the application falls
+back to main.secret_key, so every pod uses the same keys.
+*/}}
+{{- define "incidentrelay.configFromEnv" -}}
+{{- range $key, $source := default (dict) .Values.configFrom }}
+{{- if not (regexMatch "^[a-z0-9_]+\\.[a-z0-9_]+$" $key) -}}
+{{- fail (printf "configFrom key %q must look like <section>.<option>, e.g. database.password" $key) -}}
+{{- end -}}
+{{- $parts := splitn "." 2 $key -}}
+{{- $name := printf "INCIDENTRELAY__%s__%s" (upper $parts._0) (upper $parts._1) -}}
+{{- /*
+A Deployment can't hold the same variable twice (server-side apply rejects
+it, and a plain create keeps only one of them), and the application refuses
+a variable together with its __FILE form.
+*/ -}}
+{{- range $component := list "web" "scheduler" "telegram" "slack" -}}
+{{- $values := default (dict) (get $.Values $component) -}}
+{{- if or (eq $component "web") $values.enabled -}}
+{{- range (default (list) $values.extraEnv) -}}
+{{- if has (toString .name) (list $name (printf "%s__FILE" $name)) -}}
+{{- fail (printf "configFrom.%s and %s.extraEnv (%s) set the same option; set it in only one of them" $key $component .name) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- $source = default (dict) $source -}}
+{{- if ne (len (keys $source)) 1 -}}
+{{- fail (printf "configFrom.%s must set exactly one of secretKeyRef, configMapKeyRef or file" $key) -}}
+{{- end -}}
+{{- if hasKey $source "file" }}
+- name: {{ $name }}__FILE
+  value: {{ $source.file | quote }}
+{{- else if or (hasKey $source "secretKeyRef") (hasKey $source "configMapKeyRef") }}
+- name: {{ $name }}
+  valueFrom:
+    {{- toYaml $source | nindent 4 }}
+{{- else -}}
+{{- fail (printf "configFrom.%s must set exactly one of secretKeyRef, configMapKeyRef or file" $key) -}}
+{{- end }}
+{{- end }}
+{{- end }}
+
+{{/*
 Environment variables used by Python/OpenSSL and Requests so every component
 uses the combined system + custom trust bundle.
 */}}
@@ -340,6 +503,8 @@ Volumes shared by every component.
   {{- end }}
 - name: logs
   emptyDir: {}
+- name: metrics
+  emptyDir: {}
 {{- if include "incidentrelay.customCAEnabled" . }}
 - name: custom-ca-source
   configMap:
@@ -366,6 +531,12 @@ Volume mounts shared by every component.
   mountPath: /var/lib/incidentrelay
 - name: logs
   mountPath: /var/log/incidentrelay
+{{- /*
+prometheus_client keys its counter files by PID, so every pod gets its own
+directory instead of sharing the data volume with other pods.
+*/}}
+- name: metrics
+  mountPath: /var/lib/incidentrelay/metrics
 {{- if include "incidentrelay.customCAEnabled" . }}
 - name: custom-ca-bundle
   mountPath: /etc/incidentrelay/ca

@@ -58,5 +58,20 @@
   "overview.alert.fallback": "Alert",
   "overview.escalation.rule": " · rule #{position}",
   "overview.escalation.policy": "Policy: {name}{rule}",
-  "overview.escalation.rotation": "Rotation: {name}"
+  "overview.escalation.rotation": "Rotation: {name}",
+  "overview.filters.title": "Dashboard filters",
+  "overview.filters.involvement": "Involvement",
+  "overview.filters.involvement_all": "All alerts",
+  "overview.filters.involvement_assigned": "Assigned to me",
+  "overview.filters.involvement_responder": "I'm a responder",
+  "overview.filters.involvement_stakeholder": "I'm a stakeholder",
+  "overview.filters.involvement_any": "Any of mine",
+  "overview.filters.assigned_hint": "\"Assigned to me\" means escalation currently points at you.",
+  "overview.filters.teams": "Teams",
+  "overview.filters.all_teams": "All teams",
+  "overview.filters.my_teams": "My teams",
+  "overview.filters.global_team_lock": "Set by the team selector in the top bar",
+  "overview.filters.services": "Services",
+  "overview.filters.all_services": "All services",
+  "overview.filters.reset": "Reset"
 }

@@ -109,3 +109,19 @@ def test_openapi_alert_group_detail_exposes_event_pagination():
     assert "events_pagination" in schema["properties"]
     assert parameters["events_page"]["schema"]["minimum"] == 1
     assert parameters["events_page_size"]["schema"]["maximum"] == 100
+
+
+def test_openapi_alerts_list_documents_involvement_and_team_ids():
+    spec = build_openapi_spec()
+
+    operation = spec["paths"]["/api/alerts"]["get"]
+    params = {param["name"]: param for param in operation["parameters"]}
+
+    assert params["involvement"]["schema"]["enum"] == [
+        "assigned",
+        "responder",
+        "stakeholder",
+        "any",
+    ]
+    assert params["team_id"]["schema"]["type"] == "array"
+    assert params["team_id"]["explode"] is True

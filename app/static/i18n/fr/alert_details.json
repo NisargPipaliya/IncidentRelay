@@ -287,6 +287,7 @@
   "alert_details.events.merge_target_updated": "Cible de fusion mise à jour",
   "alert_details.events.acknowledged": "Acquittée",
   "alert_details.events.resolved": "Résolue",
+  "alert_details.events.reopened": "Rouverte (nouvelle occurrence)",
   "alert_details.events.notification": "Notification",
   "alert_details.events.reminder": "Rappel",
   "alert_details.events.escalation": "Escalade",

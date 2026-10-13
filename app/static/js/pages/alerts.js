@@ -2816,6 +2816,7 @@ function alertEventTypeLabel(eventType) {
         merged: i18n.t("alert_details.events.merged"),
         merge_target_updated: i18n.t("alert_details.events.merge_target_updated"),
         acknowledged: i18n.t("alert_details.events.acknowledged"),
+        reopened: i18n.t("alert_details.events.reopened"),
         resolved: i18n.t("alert_details.responder.resolved"),
         notification: i18n.t("alert_details.events.notification"),
         reminder: i18n.t("alert_details.events.reminder"),

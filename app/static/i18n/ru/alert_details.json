@@ -287,6 +287,7 @@
   "alert_details.events.merge_target_updated": "Целевая группа объединения обновлена",
   "alert_details.events.acknowledged": "Подтверждено",
   "alert_details.events.resolved": "Закрыто",
+  "alert_details.events.reopened": "Открыто повторно (новый сигнал)",
   "alert_details.events.notification": "Уведомление",
   "alert_details.events.reminder": "Напоминание",
   "alert_details.events.escalation": "Эскалация",

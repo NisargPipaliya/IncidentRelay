@@ -287,6 +287,7 @@
   "alert_details.events.merge_target_updated": "Merge target updated",
   "alert_details.events.acknowledged": "Acknowledged",
   "alert_details.events.resolved": "Resolved",
+  "alert_details.events.reopened": "Reopened (new occurrence)",
   "alert_details.events.notification": "Notification",
   "alert_details.events.reminder": "Reminder",
   "alert_details.events.escalation": "Escalation",

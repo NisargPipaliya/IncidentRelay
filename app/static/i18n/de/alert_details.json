@@ -287,6 +287,7 @@
   "alert_details.events.merge_target_updated": "Fusionsziel aktualisiert",
   "alert_details.events.acknowledged": "Bestätigt",
   "alert_details.events.resolved": "Gelöst",
+  "alert_details.events.reopened": "Wieder geöffnet (neues Ereignis)",
   "alert_details.events.notification": "Benachrichtigung",
   "alert_details.events.reminder": "Erinnerung",
   "alert_details.events.escalation": "Eskalation",

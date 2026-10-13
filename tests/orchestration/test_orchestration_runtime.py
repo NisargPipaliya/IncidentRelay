@@ -131,12 +131,46 @@ def test_hybrid_runtime_applies_event_routing_service_and_grouping(db):
     assert result.service.id == service.id
     assert result.group_key == "database-prod"
     assert result.grouping_window_seconds == 120
+    assert result.grouping_reopen_window_seconds == 0
     assert alert_data["title"] == "Orchestrated title"
     assert alert_data["service_id"] == service.id
     assert alert_data["orchestration_group_key"] == "database-prod"
     execution = OrchestrationExecution.get_by_id(result.execution_ids[0])
     assert execution.matched_rule_count == 1
     assert execution.trace_json["applied"] is True
+
+
+def test_active_runtime_propagates_reopen_window_without_changing_group_window(db):
+    group = create_group()
+    team = create_team(group)
+    route = create_route(team, source="alertmanager")
+    _publish(group, _always([
+        {"type": "set_grouping", "reopen_window_seconds": 300, "window_seconds": 17},
+    ]))
+    event = {
+        "source": "alertmanager", "forced_route_id": route.id,
+        "dedup_key": "runtime-reopen-window-1", "title": "Reopen test",
+        "labels": {"alertname": "DiskFull"}, "payload": {},
+    }
+    result = run_event_orchestration(event)
+    assert result.grouping_reopen_window_seconds == 300
+    assert result.grouping_window_seconds == 17
+    assert result.to_dict()["grouping_reopen_window_seconds"] == 300
+
+
+def test_shadow_reopen_window_does_not_activate(db):
+    group = create_group()
+    team = create_team(group)
+    route = create_route(team, source="alertmanager")
+    _publish(group, _always([
+        {"type": "set_grouping", "reopen_window_seconds": 300},
+    ]), mode="shadow")
+    result = run_event_orchestration({
+        "source": "alertmanager", "forced_route_id": route.id,
+        "dedup_key": "shadow-reopen-window-1", "title": "Shadow test",
+        "labels": {"alertname": "DiskFull"}, "payload": {},
+    })
+    assert result.grouping_reopen_window_seconds == 0
 
 
 def test_shadow_runtime_records_candidate_without_mutating_event(db):

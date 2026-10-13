@@ -44,6 +44,7 @@ nav:
       - Overview: incidents/index.md
       - API migration 2.3: incidents/api-migration-2.3.md
       - 2.3 Release Notes: incidents/release-notes-2.3.md
+      - AlertGroup reopen 2.4: incidents/reopen-2.4.md
       - Alerts and Alert Groups: usage/alerts.md
       - Incident Priorities: incidents/priorities.md
       - Incident Responders: incidents/responders.md

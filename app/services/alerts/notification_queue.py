@@ -85,8 +85,14 @@ def process_due_alert_group_notifications(limit=100):
             # not overwrite the persisted acknowledged state.
             group = alerts_repo.get_alert_group(selected_group.id)
 
-            if not group.notification_pending or group.status != "firing":
-                if group.notification_pending:
+            if (
+                not group.notification_pending
+                or group.status != "firing"
+                or group.notification_due_at is None
+                or group.notification_due_at > now
+                or group.notification_due_at != selected_group.notification_due_at
+            ):
+                if group.notification_pending and group.status != "firing":
                     alerts_repo.clear_alert_group_notification(group)
                 skipped += 1
                 continue

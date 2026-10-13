@@ -71,10 +71,13 @@ def _ensure_alert_group(group):
 def should_skip_delivery_for_group_status(delivery):
     """Return True when delayed delivery is no longer relevant."""
 
-    if delivery.event_type not in SKIP_IF_NOT_FIRING_EVENT_TYPES:
+    if delivery.event_type not in SKIP_IF_NOT_FIRING_EVENT_TYPES | {"resolved"}:
         return False
 
     group = AlertGroup.get_by_id(delivery.group_id)
+    if delivery.event_type == "resolved":
+        # A queued resolution from the previous occurrence is obsolete after reopen.
+        return group.status != "resolved"
 
     if is_notification_lifecycle_suppressed(group) or is_alert_group_shelved(group):
         return True
@@ -542,6 +545,10 @@ def send_delivery(delivery):
 
     if not group:
         mark_delivery_skipped(delivery, "alert_group_not_found")
+        return 0
+
+    if delivery.event_type == "resolved" and group.status != "resolved":
+        mark_delivery_skipped(delivery, "alert_group_reopened")
         return 0
 
     if delivery.event_type in SKIP_IF_NOT_FIRING_EVENT_TYPES:

@@ -14,6 +14,8 @@ from app.api.schemas.integrations import (
     NagiosWebhookSchema,
     GenericWebhookSchema,
     GrafanaWebhookSchema,
+    OpenSearchWebhookSchema,
+    KibanaWebhookSchema,
     LibreNMSWebhookSchema,
     RmonWebhookSchema,
     SentryWebhookSchema,
@@ -81,6 +83,43 @@ def grafana_webhook():
     return process_incoming_alerts(
         normalize_for_source("grafana", payload.model_dump())
     )
+
+
+def _search_alerting_webhook(source, schema):
+    """Shared route-token and JSON intake for search-engine alerting sources."""
+    intake_route = getattr(request, "current_intake_route", None)
+    if intake_route and intake_route.source != source:
+        return make_error_response(
+            error="route_source_mismatch",
+            message=f"Route source must be {source}.",
+            status_code=400,
+        )
+
+    payload, error = validate_body(schema)
+    if error:
+        return error
+
+    return process_incoming_alerts(
+        normalize_for_source(
+            source,
+            payload.model_dump(exclude_none=True),
+            route_config={"route_id": intake_route.id if intake_route else None},
+        )
+    )
+
+
+@integrations_bp.route("/opensearch", methods=["POST"])
+@require_alert_token()
+def opensearch_webhook():
+    """Receive per-trigger OpenSearch Alerting custom webhook notifications."""
+    return _search_alerting_webhook("opensearch", OpenSearchWebhookSchema)
+
+
+@integrations_bp.route("/kibana", methods=["POST"])
+@require_alert_token()
+def kibana_webhook():
+    """Receive per-alert Kibana Alerting Webhook connector notifications."""
+    return _search_alerting_webhook("kibana", KibanaWebhookSchema)
 
 
 @integrations_bp.route("/datadog", methods=["POST"])

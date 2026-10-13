@@ -21,7 +21,9 @@ Incoming integrations create or update alerts in IncidentRelay. They are selecte
 |---------------------|--------------------------------------------|-----------------------------------------------------------|
 | Alertmanager        | `POST /api/integrations/alertmanager`      | [Alertmanager](alertmanager.md)                           |
 | AWS SNS/Cloud watch | `POST /api/integrations/aws-sns`           | [AWS SNS/Cloud watch](integrations/aws-sns-cloudwatch.md) |
-| Grafana             | `POST /api/integrations/grafana`           | [Grafana](grafana.md)                                     |
+| Grafana             | `POST /api/integrations/grafana`           | [Grafana](grafana.md)
+| OpenSearch Alerting | `POST /api/integrations/opensearch`        | [OpenSearch](opensearch.md) |
+| Kibana Alerting     | `POST /api/integrations/kibana`            | [Kibana](kibana.md) |                                     |
 | Datadog             | `POST /api/integrations/datadog`           | [Datadog](datadog.md)                                     |
 | New Relic           | `POST /api/integrations/new-relic`         | [New Relic](new-relic.md)                                 |
 | Azure Monitor       | `POST /api/integrations/azure-monitor`      | [Azure Monitor](azure-monitor.md)                         |

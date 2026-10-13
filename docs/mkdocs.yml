@@ -69,6 +69,8 @@ nav:
       - Incoming alert sources:
           - Alertmanager: integrations/alertmanager.md
           - New Relic: integrations/new-relic.md
+          - OpenSearch Alerting: integrations/opensearch.md
+          - Kibana Alerting: integrations/kibana.md
           - Azure Monitor: integrations/azure-monitor.md
           - Cloud.ru: integrations/cloud-ru.md
           - Nagios: integrations/nagios.md

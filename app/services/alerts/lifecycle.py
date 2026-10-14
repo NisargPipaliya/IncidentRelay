@@ -26,7 +26,11 @@ from app.services.alerts.maintenance_state import (
     record_maintenance_match,
     should_apply_window_to_group,
 )
-from app.services.alerts.notification_queue import schedule_group_notification
+from app.services.alerts.notification_queue import (
+    schedule_group_notification,
+    schedule_recovery_notification,
+    recovery_notification_delay_seconds,
+)
 from app.services.alerts.shelving import clear_shelve_on_resolve
 from app.services.alerts.priority import (
     apply_priority_resolution_to_group,
@@ -586,23 +590,36 @@ def _handle_existing_alert(
         )
     elif status == "resolved":
         if group.status == "resolved":
-            alerts_repo.clear_alert_group_notification(group)
-
-            if old_group_status != "resolved":
-                notify_stakeholders(
-                    group,
-                    "resolved",
-                    old_value=old_group_status,
-                )
-
-            if group.last_notification_at:
-                sent_count = notify_alert(
-                    group,
-                    event_type="resolved",
-                )
-                trace.resolved_notification_sent(sent_count=sent_count)
-            else:
+            recovery_delay = recovery_notification_delay_seconds()
+            if recovery_delay and old_group_status == "resolved":
+                # Duplicate upstream resolved payload: leave an already queued
+                # recovery notification untouched, never push its due time out.
                 trace.notification_not_needed(group)
+            elif recovery_delay and old_group_status != "resolved":
+                # Atomically replace firing work with pending recovery. Never
+                # clear a recovery already queued by a concurrent resolved.
+                if schedule_recovery_notification(group, now=now):
+                    trace.step(
+                        "notification", "recovery_notification_scheduled", "success",
+                        "Recovery notification deferred",
+                        "Technical recovery is immediate; outbound resolution waits for the configured grace period.",
+                        delay_seconds=recovery_delay,
+                    )
+                else:
+                    trace.notification_not_needed(group)
+            else:
+                alerts_repo.clear_alert_group_notification(group)
+                if old_group_status != "resolved":
+                    notify_stakeholders(
+                        group,
+                        "resolved",
+                        old_value=old_group_status,
+                    )
+                if group.last_notification_at:
+                    sent_count = notify_alert(group, event_type="resolved")
+                    trace.resolved_notification_sent(sent_count=sent_count)
+                else:
+                    trace.notification_not_needed(group)
         elif group.status == "firing":
             schedule_group_notification(
                 group,

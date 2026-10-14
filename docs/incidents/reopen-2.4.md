@@ -60,10 +60,17 @@ On reopen, stale queued technical notification work is cleared and the
 notification/escalation cycle starts again. Queued user-level `resolved`
 notifications for the previous occurrence are skipped if the group is now open.
 
-**Recovery notification hysteresis is a separate follow-up**, not enabled by
-`reopen_window_seconds`: resolved notifications still follow the existing
-immediate-delivery behavior. A durable, retriable delayed-recovery outbox and
-safe cancellation must be added before claiming this part of #85 complete.
+Recovery notification hysteresis is configured separately in `[alerts]` with
+`recovery_notification_delay_seconds`. The default is `0` (immediate delivery).
+When enabled, **technical resolution remains immediate**, but outbound resolved
+notifications (including stakeholder messages) are queued until the delay
+expires. An eligible reopen cancels the pending recovery; duplicate upstream
+`resolved` events do not move the deadline. Manual Resolve is not delayed.
+
+The existing persisted group notification scheduler processes the deferred
+recovery and serializes delivery with the reopen identity lock; any external
+message already delivered cannot be recalled. See
+[Configuration](../getting-started/configuration.md#recovery-notification-hysteresis).
 
 ## Compatibility
 

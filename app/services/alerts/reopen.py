@@ -115,6 +115,10 @@ def restart_resolved_group(
     if group is None or group.status != "resolved" or group.merged_into_id:
         raise RuntimeError("resolved AlertGroup changed while reopening")
 
+    recovery_pending = bool(
+        group.notification_pending
+        and group.notification_reason == "recovery"
+    )
     group.previous_status = "resolved"
     group.status = "firing"
     group.acknowledged_by = None
@@ -136,6 +140,13 @@ def restart_resolved_group(
     group.notification_reason = None
     group.updated_at = now
     group.save()
+
+    if recovery_pending:
+        alerts_repo.create_alert_event(
+            group_id=group.id,
+            event_type="recovery_notification_cancelled",
+            message="Pending recovery notification cancelled by AlertGroup reopen",
+        )
 
     # Do not leak old-cycle reminders/resolve notifications into the new cycle.
     cancel_pending_group_deliveries(

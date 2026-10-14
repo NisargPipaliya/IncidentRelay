@@ -2068,6 +2068,16 @@ function renderAlertPrimaryDetails(alert, modal) {
             .text(alert.title || i18n.t("alert_details.entity.alert_number", {id: alert.id}))
     );
 
+    if (alert.recovery_notification_due_at && alert.status === "resolved") {
+        target.append(
+            $("<div>")
+                .addClass("help-text alert-recovery-notification-pending")
+                .text(i18n.t("alert_details.recovery.pending", {
+                    time: formatDateTimeMinutes(alert.recovery_notification_due_at)
+                }))
+        );
+    }
+
     if (alert.shelved && alert.shelve) {
         const shelfSummary = $("<div>").addClass("help-text alert-shelve-summary");
         const until = formatDateTimeMinutes(alert.shelve.until);
@@ -2817,6 +2827,10 @@ function alertEventTypeLabel(eventType) {
         merge_target_updated: i18n.t("alert_details.events.merge_target_updated"),
         acknowledged: i18n.t("alert_details.events.acknowledged"),
         reopened: i18n.t("alert_details.events.reopened"),
+        recovery_notification_scheduled: i18n.t("alert_details.recovery.scheduled"),
+        recovery_notification_cancelled: i18n.t("alert_details.recovery.cancelled"),
+        recovery_notification_sent: i18n.t("alert_details.recovery.sent"),
+        recovery_notification_skipped: i18n.t("alert_details.recovery.skipped"),
         resolved: i18n.t("alert_details.responder.resolved"),
         notification: i18n.t("alert_details.events.notification"),
         reminder: i18n.t("alert_details.events.reminder"),

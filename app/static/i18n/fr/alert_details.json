@@ -349,5 +349,10 @@
   "alert_details.incident.title": "Incident",
   "alert_details.incident.linked_help": "Cet AlertGroup est lié à un incident opérationnel.",
   "alert_details.incident.open": "Ouvrir l’incident",
-  "alert_details.incident.load_failed": "Impossible de charger l’incident lié."
+  "alert_details.incident.load_failed": "Impossible de charger l’incident lié.",
+  "alert_details.recovery.pending": "Notification de rétablissement prévue pour {time}",
+  "alert_details.recovery.scheduled": "Notification de rétablissement programmée",
+  "alert_details.recovery.cancelled": "Notification de rétablissement annulée",
+  "alert_details.recovery.sent": "Notification de rétablissement envoyée",
+  "alert_details.recovery.skipped": "Notification de rétablissement ignorée"
 }

@@ -349,5 +349,10 @@
   "alert_details.incident.title": "Incident",
   "alert_details.incident.linked_help": "Diese AlertGroup ist mit einem operativen Incident verknüpft.",
   "alert_details.incident.open": "Incident öffnen",
-  "alert_details.incident.load_failed": "Der verknüpfte Incident konnte nicht geladen werden."
+  "alert_details.incident.load_failed": "Der verknüpfte Incident konnte nicht geladen werden.",
+  "alert_details.recovery.pending": "Wiederherstellungsbenachrichtigung geplant für {time}",
+  "alert_details.recovery.scheduled": "Wiederherstellungsbenachrichtigung geplant",
+  "alert_details.recovery.cancelled": "Wiederherstellungsbenachrichtigung abgebrochen",
+  "alert_details.recovery.sent": "Wiederherstellungsbenachrichtigung gesendet",
+  "alert_details.recovery.skipped": "Wiederherstellungsbenachrichtigung übersprungen"
 }

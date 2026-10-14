@@ -655,6 +655,13 @@ def serialize_alert_group(
         "first_seen_at": serialize_utc_datetime(group.first_seen_at),
         "last_seen_at": serialize_utc_datetime(group.last_seen_at),
         "last_notification_at": serialize_utc_datetime(group.last_notification_at),
+        "recovery_notification_due_at": (
+            serialize_utc_datetime(group.notification_due_at)
+            if group.status == "resolved"
+            and group.notification_pending
+            and group.notification_reason == "recovery"
+            else None
+        ),
 
         "reminder_count": group.reminder_count,
 

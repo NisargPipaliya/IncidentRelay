@@ -349,5 +349,10 @@
   "alert_details.incident.title": "Инцидент",
   "alert_details.incident.linked_help": "Эта группа алертов связана с операционным инцидентом.",
   "alert_details.incident.open": "Открыть инцидент",
-  "alert_details.incident.load_failed": "Не удалось загрузить связанный инцидент."
+  "alert_details.incident.load_failed": "Не удалось загрузить связанный инцидент.",
+  "alert_details.recovery.pending": "Уведомление о восстановлении запланировано на {time}",
+  "alert_details.recovery.scheduled": "Уведомление о восстановлении запланировано",
+  "alert_details.recovery.cancelled": "Уведомление о восстановлении отменено",
+  "alert_details.recovery.sent": "Уведомление о восстановлении отправлено",
+  "alert_details.recovery.skipped": "Уведомление о восстановлении пропущено"
 }

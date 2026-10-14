@@ -349,5 +349,10 @@
   "alert_details.incident.title": "事件",
   "alert_details.incident.linked_help": "此 AlertGroup 已关联到一个运营事件。",
   "alert_details.incident.open": "打开事件",
-  "alert_details.incident.load_failed": "无法加载关联的事件。"
+  "alert_details.incident.load_failed": "无法加载关联的事件。",
+  "alert_details.recovery.pending": "恢复通知计划于 {time} 发送",
+  "alert_details.recovery.scheduled": "恢复通知已计划发送",
+  "alert_details.recovery.cancelled": "恢复通知已取消",
+  "alert_details.recovery.sent": "恢复通知已发送",
+  "alert_details.recovery.skipped": "恢复通知已跳过"
 }

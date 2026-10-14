@@ -349,5 +349,10 @@
   "alert_details.incident.title": "Incident",
   "alert_details.incident.linked_help": "This AlertGroup is linked to an operational Incident.",
   "alert_details.incident.open": "Open Incident",
-  "alert_details.incident.load_failed": "Could not load the linked Incident."
+  "alert_details.incident.load_failed": "Could not load the linked Incident.",
+  "alert_details.recovery.pending": "Recovery notification scheduled for {time}",
+  "alert_details.recovery.scheduled": "Recovery notification scheduled",
+  "alert_details.recovery.cancelled": "Recovery notification cancelled",
+  "alert_details.recovery.sent": "Recovery notification sent",
+  "alert_details.recovery.skipped": "Recovery notification skipped"
 }

@@ -354,5 +354,9 @@
   "alert_details.recovery.scheduled": "Recovery notification scheduled",
   "alert_details.recovery.cancelled": "Recovery notification cancelled",
   "alert_details.recovery.sent": "Recovery notification sent",
+  "alert_details.recovery.retry_scheduled": "Recovery retry scheduled",
+  "alert_details.recovery.partial": "Recovery partially delivered",
+  "alert_details.recovery.failed": "Recovery delivery failed",
+  "alert_details.recovery.exhausted": "Recovery recipient exhausted retries",
   "alert_details.recovery.skipped": "Recovery notification skipped"
 }

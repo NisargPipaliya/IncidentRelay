@@ -354,5 +354,9 @@
   "alert_details.recovery.scheduled": "Notification de rétablissement programmée",
   "alert_details.recovery.cancelled": "Notification de rétablissement annulée",
   "alert_details.recovery.sent": "Notification de rétablissement envoyée",
+  "alert_details.recovery.retry_scheduled": "Nouvelle tentative de récupération planifiée",
+  "alert_details.recovery.partial": "Récupération partiellement notifiée",
+  "alert_details.recovery.failed": "Échec de notification de récupération",
+  "alert_details.recovery.exhausted": "Tentatives de livraison épuisées",
   "alert_details.recovery.skipped": "Notification de rétablissement ignorée"
 }

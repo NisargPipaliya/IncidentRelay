@@ -6,12 +6,16 @@ import pytest
 
 from app.modules.common import utc_now
 from app.modules.db.models import Alert, AlertEvent, AlertGroup
+from app.modules.db import notifications_repo
 from app.services.alerts import lifecycle, notification_queue
 from app.services.alerts.actions import resolve_alert
 from app.services.alerts.lifecycle import upsert_alert
 from app.services.orchestration.runtime import RuntimeResult
 from app.settings import Config
-from tests.factories import create_group, create_route, create_team
+from tests.factories import (
+    create_channel, create_group, create_route, create_team,
+    create_user, create_incident_stakeholder,
+)
 
 
 @pytest.fixture
@@ -39,6 +43,26 @@ def signal(route, status="firing"):
         "labels": {"alertname": "DiskFull"},
         "payload": {},
     }
+
+
+def delivered_channel(group, route):
+    channel = create_channel(route.team.group, route.team)
+    notifications_repo.save_notification(
+        group_id=group.id, channel_id=channel.id,
+        provider="webhook", event_type="notification",
+        provider_status="sent", external_message_id="initial",
+    )
+    return channel
+
+
+def send_channel_success(calls):
+    def deliver(current, event_type="resolved", **kwargs):
+        ids = set(kwargs.get("channel_ids", []))
+        calls.append((current.id, event_type, ids))
+        return {"sent": len(ids), "channels": {
+            channel_id: {"status": "sent"} for channel_id in ids
+        }}
+    return deliver
 
 
 def count_events(group_id, event_type):
@@ -80,6 +104,7 @@ def test_recovery_is_deferred_and_due_process_sends_once(route, monkeypatch):
     group = AlertGroup.get_by_id(first.group.id)
     group.last_notification_at = utc_now()
     group.save(only=[AlertGroup.last_notification_at])
+    channel = delivered_channel(group, route)
 
     immediate_calls = []
     monkeypatch.setattr(
@@ -108,12 +133,7 @@ def test_recovery_is_deferred_and_due_process_sends_once(route, monkeypatch):
 
     delivery = []
     monkeypatch.setattr(
-        notification_queue, "notify_alert",
-        lambda current, event_type=None: delivery.append((current.id, event_type)) or 1,
-    )
-    monkeypatch.setattr(
-        notification_queue, "notify_stakeholders",
-        lambda current, event_type, **kwargs: delivery.append((current.id, event_type)) or {"sent": 1},
+        notification_queue, "notify_alert", send_channel_success(delivery),
     )
     AlertGroup.update(notification_due_at=utc_now() - timedelta(seconds=1)).where(
         AlertGroup.id == group.id,
@@ -122,11 +142,11 @@ def test_recovery_is_deferred_and_due_process_sends_once(route, monkeypatch):
     result = notification_queue.process_due_alert_group_notifications()
     assert result["processed"] == 1
     assert result["sent"] == 1
-    assert delivery == [(group.id, "resolved"), (group.id, "resolved")]
+    assert delivery == [(group.id, "resolved", {channel.id})]
     assert count_events(group.id, "recovery_notification_sent") == 1
     assert not AlertGroup.get_by_id(group.id).notification_pending
     assert notification_queue.process_due_alert_group_notifications()["sent"] == 0
-    assert len(delivery) == 2
+    assert len(delivery) == 1
 
 
 def test_reopen_cancels_queued_recovery_without_mutating_old_child(route, monkeypatch):
@@ -176,6 +196,7 @@ def test_retry_when_worker_crashes_keeps_recovery_pending(route, monkeypatch):
     group = AlertGroup.get_by_id(first.group.id)
     group.last_notification_at = utc_now()
     group.save(only=[AlertGroup.last_notification_at])
+    delivered_channel(group, route)
     upsert_alert(signal(route, status="resolved"))
     AlertGroup.update(notification_due_at=utc_now() - timedelta(seconds=1)).where(
         AlertGroup.id == group.id,
@@ -200,15 +221,14 @@ def test_no_delivered_firing_still_defers_stakeholder_recovery(route, monkeypatc
         AlertGroup.id == first.group.id,
     ).execute()
 
+    stakeholder_user = create_user(group=route.team.group, email="stake@example.com")
+    create_incident_stakeholder(first.group, stakeholder_user)
     delivered = []
     monkeypatch.setattr(
-        notification_queue, "notify_alert",
-        lambda *a, **kw: delivered.append("channel") or 1,
+        notification_queue, "send_stakeholder_email",
+        lambda *a: delivered.append("stakeholder"),
     )
-    monkeypatch.setattr(
-        notification_queue, "notify_stakeholders",
-        lambda *a, **kw: delivered.append("stakeholder") or {"sent": 1},
-    )
+    monkeypatch.setattr(notification_queue, "send_stakeholder_push", lambda *a, **kw: 0)
     result = notification_queue.process_due_alert_group_notifications()
     assert result["sent"] == 1
     assert delivered == ["stakeholder"]

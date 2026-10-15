@@ -13,7 +13,7 @@ import hashlib
 from app.db import database_proxy as db
 from app.modules.common import utc_now
 from app.modules.db import alerts_repo, audit_repo, incident_core_repo
-from app.modules.db.models import AlertGroup, AlertRoute
+from app.modules.db.models import AlertGroup, AlertRoute, RecoveryNotificationDelivery
 from app.services.notifications.rules import cancel_pending_group_deliveries
 
 
@@ -119,6 +119,7 @@ def restart_resolved_group(
         group.notification_pending
         and group.notification_reason == "recovery"
     )
+    previous_resolved_at = group.resolved_at
     group.previous_status = "resolved"
     group.status = "firing"
     group.acknowledged_by = None
@@ -142,6 +143,17 @@ def restart_resolved_group(
     group.save()
 
     if recovery_pending:
+        (
+            RecoveryNotificationDelivery.update(
+                status="cancelled", updated_at=now,
+            )
+            .where(
+                (RecoveryNotificationDelivery.group == group.id)
+                & (RecoveryNotificationDelivery.resolved_at == previous_resolved_at)
+                & (RecoveryNotificationDelivery.status == "pending")
+            )
+            .execute()
+        )
         alerts_repo.create_alert_event(
             group_id=group.id,
             event_type="recovery_notification_cancelled",

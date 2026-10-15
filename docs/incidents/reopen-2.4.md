@@ -70,7 +70,7 @@ expires. An eligible reopen cancels the pending recovery; duplicate upstream
 The existing persisted group notification scheduler processes the deferred
 recovery and serializes delivery with the reopen identity lock; any external
 message already delivered cannot be recalled. See
-[Configuration](../getting-started/configuration.md#recovery-notification-hysteresis).
+[Configuration](../getting-started/configuration.md#recovery-notification-hysteresis). See also the [per-recipient retry hardening](recovery-delivery-2.4.md).
 
 ## Compatibility
 

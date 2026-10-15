@@ -354,5 +354,9 @@
   "alert_details.recovery.scheduled": "Wiederherstellungsbenachrichtigung geplant",
   "alert_details.recovery.cancelled": "Wiederherstellungsbenachrichtigung abgebrochen",
   "alert_details.recovery.sent": "Wiederherstellungsbenachrichtigung gesendet",
+  "alert_details.recovery.retry_scheduled": "Wiederherstellungsversuch geplant",
+  "alert_details.recovery.partial": "Wiederherstellung teilweise zugestellt",
+  "alert_details.recovery.failed": "Wiederherstellungszustellung fehlgeschlagen",
+  "alert_details.recovery.exhausted": "Wiederholungsversuche für Empfänger erschöpft",
   "alert_details.recovery.skipped": "Wiederherstellungsbenachrichtigung übersprungen"
 }

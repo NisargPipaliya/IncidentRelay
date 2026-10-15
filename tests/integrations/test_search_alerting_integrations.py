@@ -278,7 +278,7 @@ def test_route_tokens_isolate_same_provider_identity(client, db):
         for i in (1, 2)
     ]
     results = []
-    for i, route in enumerate(routes, 1):
+    for i, _route in enumerate(routes, 1):
         response = client.post(
             "/api/integrations/kibana",
             json=kibana_payload(),

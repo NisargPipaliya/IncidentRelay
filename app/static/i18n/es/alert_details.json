@@ -354,5 +354,9 @@
   "alert_details.recovery.scheduled": "Notificación de recuperación programada",
   "alert_details.recovery.cancelled": "Notificación de recuperación cancelada",
   "alert_details.recovery.sent": "Notificación de recuperación enviada",
+  "alert_details.recovery.retry_scheduled": "Reintento de recuperación programado",
+  "alert_details.recovery.partial": "Recuperación notificada parcialmente",
+  "alert_details.recovery.failed": "Error en la notificación de recuperación",
+  "alert_details.recovery.exhausted": "Reintentos de entrega agotados",
   "alert_details.recovery.skipped": "Notificación de recuperación omitida"
 }

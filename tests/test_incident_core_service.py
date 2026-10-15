@@ -2,7 +2,7 @@ import pytest
 
 from app.modules.db.models import AlertGroup, AuditLog, Incident, IncidentAlertGroupLink, IncidentEvent
 from app.services.incidents import core
-from tests.factories import add_user_to_team, create_group, create_service, create_team, create_user, unique
+from tests.factories import add_user_to_team, create_group, create_team, create_user, unique
 
 
 @pytest.fixture(autouse=True)

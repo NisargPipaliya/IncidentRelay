@@ -354,5 +354,9 @@
   "alert_details.recovery.scheduled": "恢复通知已计划发送",
   "alert_details.recovery.cancelled": "恢复通知已取消",
   "alert_details.recovery.sent": "恢复通知已发送",
+  "alert_details.recovery.retry_scheduled": "已计划恢复通知重试",
+  "alert_details.recovery.partial": "恢复通知部分送达",
+  "alert_details.recovery.failed": "恢复通知发送失败",
+  "alert_details.recovery.exhausted": "收件人的重试次数已耗尽",
   "alert_details.recovery.skipped": "恢复通知已跳过"
 }

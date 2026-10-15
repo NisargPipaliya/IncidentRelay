@@ -11,7 +11,7 @@ from app.modules.db.models import Alert, AlertGroup
 from app.services.alerts.lifecycle import upsert_alert
 from app.services.alerts import lifecycle
 from app.services.orchestration.runtime import RuntimeResult
-from tests.factories import create_group, create_route, create_team, unique
+from tests.factories import create_channel, create_group, create_route, create_team, unique
 
 pytestmark = pytest.mark.postgresql
 
@@ -83,6 +83,12 @@ def test_recovery_delivery_serializes_with_concurrent_reopen(db, monkeypatch):
     original.last_notification_at = utc_now()
     original.save(only=[AlertGroup.last_notification_at])
     upsert_alert(dict(data, status="resolved"))
+    from app.modules.db import notifications_repo
+    channel = create_channel(group, team)
+    notifications_repo.save_notification(
+        group_id=first.group.id, channel_id=channel.id,
+        provider="webhook", event_type="notification", provider_status="sent",
+    )
 
     AlertGroup.update(
         notification_due_at=utc_now() - timedelta(seconds=1)
@@ -93,16 +99,15 @@ def test_recovery_delivery_serializes_with_concurrent_reopen(db, monkeypatch):
     allow_send = Event()
     calls = []
 
-    def fake_delivery(current, *, event_type):
+    def fake_delivery(current, *, event_type, channel_ids, **kwargs):
         sending.set()
         assert allow_send.wait(timeout=10)
         calls.append((current.id, event_type))
-        return 1
+        return {"sent": 1, "channels": {
+            channel.id: {"status": "sent"},
+        }}
 
     monkeypatch.setattr(notification_queue, "notify_alert", fake_delivery)
-    monkeypatch.setattr(
-        notification_queue, "notify_stakeholders", lambda *a, **kw: {"sent": 0},
-    )
 
     def send_due():
         with database_proxy.obj.connection_context():

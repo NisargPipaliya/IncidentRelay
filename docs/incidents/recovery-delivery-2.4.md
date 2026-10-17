@@ -24,6 +24,16 @@ new technical occurrence is unaffected. User-level notification rules use
 existing `UserNotificationDelivery` persistence and are enqueued once per
 recovery cycle; this patch does not change their own retry semantics.
 
+Delayed `resolved` user notifications are fenced against reopen using the
+same grouping transaction lock as the recovery worker. A queued notification
+from an older resolved occurrence will be skipped even if the AlertGroup has
+already been reopened **and resolved again**. Reassigned or unassigned
+recipients are likewise skipped; a newer assignment is not silently paged in
+place of the originally selected user. The first recovery fanout snapshots its
+user recipient ID in the target ledger. In-flight `user_rules` recovery
+ledger rows created by older hardening code with target ID `0` are skipped
+rather than silently redirecting them to an unrelated current assignee.
+
 ## Operational notes
 
 - Requires DB migration `20261014090000_recovery_notification_deliveries`.
@@ -41,5 +51,9 @@ recovery cycle; this patch does not change their own retry semantics.
 - Exhausted deliveries remain in the DB for incident response and audit.
   Reconciliation or explicit operator retry needs a separate API/workflow;
   a retry cannot be inferred simply from editing an alert.
-- The user-rule fanout remains one-shot per resolved cycle. The rule worker's
-  existing failure statuses are not requeued by this delivery ledger.
+- The user-rule fanout remains one-shot per resolved cycle. User notification
+  deliveries stuck in `processing` after a worker crash are reclaimed for
+  `resolved` events after a 300-second lease, under the same grouping/row lock
+  used for reopen. A live delivery is never reclaimed while it holds that
+  lock. Other user notification event types keep their existing semantics.
+  Existing `failed` user deliveries are not requeued by this ledger.

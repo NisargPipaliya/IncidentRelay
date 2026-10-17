@@ -120,7 +120,7 @@ def _snapshot_recovery_targets(group, *, now):
     # Preserve the existing behavior: don't send a resolved user notification
     # if no firing notification was ever issued for this lifecycle cycle.
     if group.last_notification_at and group.assignee_id:
-        targets.append(("user_rules", 0))
+        targets.append(("user_rules", group.assignee_id))
 
     for stakeholder in incidents_repo.list_incident_stakeholders(group.id):
         if not stakeholder.active or not stakeholder.notify_on_resolved:
@@ -164,7 +164,7 @@ def _deliver_recovery_target(group, delivery):
         # Enqueue exactly once per recovery cycle, independently of retries to
         # shared channels and stakeholders.
         from app.services.notifications import rules
-        if not group.assignee_id:
+        if not group.assignee_id or group.assignee_id != delivery.target_id:
             return "skipped", 0
         return "sent", rules.enqueue_user_notifications(group, event_type="resolved")
 

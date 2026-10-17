@@ -134,3 +134,81 @@ def test_recovery_delivery_serializes_with_concurrent_reopen(db, monkeypatch):
         .order_by(AlertEvent.id.asc())
     ]
     assert event_types.index("recovery_notification_sent") < event_types.index("reopened")
+
+
+def test_resolved_user_rule_send_is_serialized_before_reopen(db, monkeypatch):
+    """A user-rule email may finish before reopen, never after it commits."""
+    if "postgres" not in db.__class__.__name__.lower():
+        pytest.skip("requires PostgreSQL")
+
+    from threading import Event
+    from app.modules.common import utc_now
+    from app.modules.db.models import UserNotificationDelivery
+    from app.services.notifications import rules
+
+    scope = create_group()
+    team = create_team(scope)
+    recipient = create_user(group=scope)
+    route = create_route(team, source="alertmanager", group_by=["alertname"])
+    monkeypatch.setattr(
+        lifecycle,
+        "run_event_orchestration",
+        lambda event, trace=None: RuntimeResult(grouping_reopen_window_seconds=120),
+    )
+    data = {
+        "source": "alertmanager", "forced_route_id": route.id,
+        "external_id": unique("user-race"), "dedup_key": unique("user-race-key"),
+        "title": "DiskFull", "severity": "critical", "status": "firing",
+        "labels": {"alertname": "DiskFull"}, "payload": {},
+    }
+    initial = upsert_alert(dict(data))
+    group = AlertGroup.get_by_id(initial.group.id)
+    group.assignee = recipient
+    group.save(only=[AlertGroup.assignee])
+    upsert_alert(dict(data, status="resolved"))
+    delivery = UserNotificationDelivery.create(
+        group=group.id,
+        user=recipient.id,
+        method="email",
+        event_type="resolved",
+        scheduled_at=utc_now(),
+        created_at=utc_now(),
+    )
+    sending = Event()
+    allow_send = Event()
+    reopening = Event()
+    messages = []
+
+    class Notifier:
+        @staticmethod
+        def send(channel, alert_group, text, event_type):
+            sending.set()
+            assert allow_send.wait(timeout=15)
+            messages.append((alert_group.id, event_type))
+            return {"provider": "email"}
+
+    monkeypatch.setitem(rules.DIRECT_NOTIFIERS, rules.NOTIFICATION_METHOD_EMAIL, Notifier())
+
+    def send():
+        with database_proxy.obj.connection_context():
+            return rules.send_delivery(delivery)
+
+    def reopen():
+        with database_proxy.obj.connection_context():
+            reopening.set()
+            return upsert_alert(dict(data)).group.id
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        pending = executor.submit(send)
+        assert sending.wait(timeout=15)
+        next_alert = executor.submit(reopen)
+        assert reopening.wait(timeout=15)
+        allow_send.set()
+        assert pending.result(timeout=30) == 1
+        assert next_alert.result(timeout=30) == group.id
+
+    assert messages == [(group.id, "resolved")]
+    assert UserNotificationDelivery.get_by_id(delivery.id).status == "sent"
+    assert AlertGroup.get_by_id(group.id).status == "firing"
+    assert upsert_alert(dict(data, status="resolved")).group.status == "resolved"
+    assert rules.send_delivery(delivery) == 0  # Already sent in the previous cycle.

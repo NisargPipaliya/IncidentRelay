@@ -358,5 +358,13 @@
   "alert_details.recovery.partial": "Уведомление о восстановлении доставлено частично",
   "alert_details.recovery.failed": "Ошибка уведомления о восстановлении",
   "alert_details.recovery.exhausted": "Попытки доставки восстановления исчерпаны",
-  "alert_details.recovery.skipped": "Уведомление о восстановлении пропущено"
+  "alert_details.recovery.skipped": "Уведомление о восстановлении пропущено",
+  "alert_details.events.view_child": "Показать дочерний Alert №{id}",
+  "alert_details.children.reopened_occurrence": "Новое срабатывание после повторного открытия",
+  "alert_details.explain.reopen_policy": "Политика повторного открытия",
+  "alert_details.explain.reopen_enabled": "Включена ({seconds} с)",
+  "alert_details.explain.reopen_disabled": "Отключена",
+  "alert_details.explain.reopen_not_eligible": "Для этого события повторное открытие недоступно",
+  "alert_details.explain.reopen_not_found": "В пределах окна нет подходящей закрытой AlertGroup",
+  "alert_details.recovery.technical_resolved_pending": "Алерт технически разрешён; уведомление о восстановлении ожидает отправки до {time}"
 }

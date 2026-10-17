@@ -40,8 +40,11 @@ def serialize_alert_event(event):
 
     return {
         "id": event.id,
+        "alert_id": event.alert_id,
+        "group_id": event.group_id,
         "event_type": event.event_type,
         "message": event.message,
+        "user_id": event.user_id,
         "user": serialize_user_short(event.user),
         "created_at": serialize_utc_datetime(event.created_at),
     }

@@ -72,6 +72,31 @@ recovery and serializes delivery with the reopen identity lock; any external
 message already delivered cannot be recalled. See
 [Configuration](../getting-started/configuration.md#recovery-notification-hysteresis). See also the [per-recipient retry hardening](recovery-delivery-2.4.md).
 
+## Operator UI (2.4)
+
+In **Alerts → AlertGroup details → Events**, the `reopened` entry links to the
+specific new child Alert. The link switches to the **Alerts** tab and focuses
+that child's card; the old, resolved children remain separate and keep their
+own terminal statuses. The child is identified through the recorded event's
+`alert_id`, not by inferring a reopen from its current status. Historical
+entries remain available through event pagination.
+
+The **Explain** tab shows the *effective* resolved-group reopen policy when
+trace data is available, including an explicit `Disabled` state. A separate
+step explains when no eligible resolved AlertGroup was selected. The older
+`window_seconds` grouping configuration is not the reopen grace period. Traces
+recorded with `compact` or `disabled` mode cannot reconstruct absent policy
+values and are not presented as evidence of a configured policy.
+
+When a linked operational Incident returns to `investigating`, its own
+**Incident activity** timeline shows that transition and a link to the
+currently visible linked AlertGroup. This is an operational lifecycle change;
+it does **not** implicitly acknowledge or close the technical AlertGroup.
+
+While a delayed recovery is pending, AlertGroup details explicitly state that
+the technical state is resolved and outbound recovery delivery is still
+pending. Cancellation, retries and failures appear in the technical timeline.
+
 ## Compatibility
 
 `/api/alert-groups` and `/api/incidents` do not change their ownership contract.

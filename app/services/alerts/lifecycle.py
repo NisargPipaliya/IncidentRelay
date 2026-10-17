@@ -896,13 +896,20 @@ def _upsert_alert(alert_data, trace, runtime=None):
         and (alert_data.get("status") or "firing") == "firing"
         and status in {"firing", "silenced"}
     )
-    if reopen_enabled:
-        trace.step(
-            "grouping", "reopen_eligible", "success",
-            "Resolved-group reuse enabled",
-            "Reopen applies only to matching resolved groups, within the configured grace period.",
-            reopen_window_seconds=reopen_window_seconds,
-        )
+    # Record the effective policy for both enabled and disabled rules. It is
+    # independent of the deduplication window and does not change lifecycle.
+    trace.step(
+        "grouping", "reopen_policy", "success",
+        "Resolved-group reuse policy",
+        (
+            "Reopen is disabled for this event."
+            if not reopen_window_seconds
+            else "Only eligible firing occurrences may reuse matching resolved groups."
+        ),
+        reopen_window_seconds=reopen_window_seconds,
+        enabled=bool(reopen_window_seconds),
+        eligible=reopen_enabled,
+    )
 
     if maintenance_decision.suppress_incident and not existing_alert and not existing_group:
         trace.incident_suppressed(maintenance_decision)
@@ -1064,7 +1071,14 @@ def _upsert_alert(alert_data, trace, runtime=None):
                         service_id=service.id if service else None,
                         now=now, reopen_window_seconds=reopen_window_seconds,
                     )
-                    if candidate is not None:
+                    if candidate is None:
+                        trace.step(
+                            "grouping", "reopen_candidate_not_found", "success",
+                            "No eligible resolved AlertGroup",
+                            "No matching resolved AlertGroup was found inside the effective reopen window.",
+                            reopen_window_seconds=reopen_window_seconds,
+                        )
+                    else:
                         group = restart_resolved_group(
                             candidate, now=now, policy=policy,
                             policy_rule=policy_rule, rotation=rotation,

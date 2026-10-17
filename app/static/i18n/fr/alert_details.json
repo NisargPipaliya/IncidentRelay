@@ -358,5 +358,13 @@
   "alert_details.recovery.partial": "Récupération partiellement notifiée",
   "alert_details.recovery.failed": "Échec de notification de récupération",
   "alert_details.recovery.exhausted": "Tentatives de livraison épuisées",
-  "alert_details.recovery.skipped": "Notification de rétablissement ignorée"
+  "alert_details.recovery.skipped": "Notification de rétablissement ignorée",
+  "alert_details.events.view_child": "Afficher l’alerte enfant n°{id}",
+  "alert_details.children.reopened_occurrence": "Nouvelle occurrence après réouverture",
+  "alert_details.explain.reopen_policy": "Politique de réouverture",
+  "alert_details.explain.reopen_enabled": "Activée ({seconds} s)",
+  "alert_details.explain.reopen_disabled": "Désactivée",
+  "alert_details.explain.reopen_not_eligible": "Non éligible pour cet événement",
+  "alert_details.explain.reopen_not_found": "Aucun groupe résolu correspondant dans la fenêtre",
+  "alert_details.recovery.technical_resolved_pending": "Alerte résolue techniquement ; notification de rétablissement en attente jusqu’à {time}"
 }

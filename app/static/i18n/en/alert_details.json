@@ -358,5 +358,13 @@
   "alert_details.recovery.partial": "Recovery partially delivered",
   "alert_details.recovery.failed": "Recovery delivery failed",
   "alert_details.recovery.exhausted": "Recovery recipient exhausted retries",
-  "alert_details.recovery.skipped": "Recovery notification skipped"
+  "alert_details.recovery.skipped": "Recovery notification skipped",
+  "alert_details.events.view_child": "Show child Alert #{id}",
+  "alert_details.children.reopened_occurrence": "New occurrence after reopen",
+  "alert_details.explain.reopen_policy": "Reopen policy",
+  "alert_details.explain.reopen_enabled": "Enabled ({seconds}s)",
+  "alert_details.explain.reopen_disabled": "Disabled",
+  "alert_details.explain.reopen_not_eligible": "Not eligible for this event",
+  "alert_details.explain.reopen_not_found": "No matching resolved AlertGroup in the reopen window",
+  "alert_details.recovery.technical_resolved_pending": "Technical alert resolved; recovery notification pending until {time}"
 }

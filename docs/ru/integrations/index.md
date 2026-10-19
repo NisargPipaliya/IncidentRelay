@@ -46,7 +46,7 @@ Monitoring system -> Incoming integration -> Route -> Notification channels -> U
 |-----------------|--------------------------------------------------------------------------------|-----------------------------------------------|
 | Mattermost      | Уведомления в чате, опциональные кнопки ACK/Resolve/Shelve, обновления сообщений       | [Канал Mattermost](mattermost.md)             |
 | Telegram        | Уведомления через Telegram Bot API, опциональные inline-действия                | [Канал Telegram](telegram.md)                 |
-| Email           | Отправляет письмо на email из профиля назначенного пользователя                 | [Канал Email](email.md)                       |
+| Email           | Отправляет на email пользователя, резервный или фиксированный адрес                 | [Канал Email](email.md)                       |
 | Slack           | Уведомления через входящий webhook или Bot API с действиями ACK/Resolve/Shelve и обновлениями | [Канал Slack](slack.md)                      |
 | Discord         | Отправляет уведомления в вебхук Discord                                         | [Каналы на основе вебхуков](webhook-channels.md) |
 | Microsoft Teams | Отправляет уведомления в вебхук Teams                                           | [Каналы на основе вебхуков](webhook-channels.md) |

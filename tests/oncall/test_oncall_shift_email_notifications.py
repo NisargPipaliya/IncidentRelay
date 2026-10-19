@@ -1,6 +1,6 @@
 from datetime import datetime, timedelta
 
-from app.modules.db.models import OnCallShiftEmailNotification, OnCallShiftMattermostNotification
+from app.modules.db.models import OnCallShiftEmailNotification
 from app.services.notifications import shift_notifications as shift_email_service
 from app.services.notifications.shift_notifications import (
     send_due_oncall_shift_email_notifications,

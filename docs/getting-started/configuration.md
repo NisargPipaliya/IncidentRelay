@@ -328,7 +328,7 @@ user = incidentrelay@example.com
 password = change-me
 ```
 
-Email notifications are sent to the assigned user's profile email address.
+Email channels default to the assigned user's profile email; optional fallback/fixed recipients can be configured per channel using `recipient_mode` and `recipient_email`. SMTP transport remains global.
 
 ## Telegram proxy
 

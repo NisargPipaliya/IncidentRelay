@@ -3,7 +3,7 @@ from datetime import datetime, timedelta
 from app.modules.db.models import AlertGroup, HeartbeatPing
 from app.services.heartbeats.service import process_overdue_heartbeats, receive_heartbeat_ping
 from app.services.integrations.auth import hash_token
-from tests.factories import create_group, create_heartbeat, create_route, create_service, create_team, create_user, add_user_to_team
+from tests.factories import create_channel, create_group, create_heartbeat, create_route, create_service, create_team, create_user, add_user_to_team
 from app.modules.common import utc_now
 
 
@@ -997,6 +997,7 @@ def test_heartbeat_auto_recovery_can_defer_outbound_notifications(monkeypatch, d
     """Heartbeat recovery must not skip the opt-in recovery hysteresis."""
     from app.settings import Config
     from app.services.alerts import notification_queue
+    from app.modules.db import notifications_repo
 
     monkeypatch.setattr(Config, "RECOVERY_NOTIFICATION_DELAY_SECONDS", 120)
     _, team, service, route = _fixture()
@@ -1016,6 +1017,16 @@ def test_heartbeat_auto_recovery_can_defer_outbound_notifications(monkeypatch, d
     group = AlertGroup.get_by_id(hb.current_alert_group_id)
     group.last_notification_at = now - timedelta(minutes=1)
     group.save(only=[AlertGroup.last_notification_at])
+    # Recovery fanout in 2.4 uses persisted recipients from earlier
+    # successful firing notifications, not a global notify_stakeholders call.
+    channel = create_channel(team.group, team)
+    notifications_repo.save_notification(
+        group_id=group.id,
+        channel_id=channel.id,
+        provider="webhook",
+        event_type="notification",
+        provider_status="sent",
+    )
 
     premature = []
     monkeypatch.setattr(
@@ -1038,14 +1049,17 @@ def test_heartbeat_auto_recovery_can_defer_outbound_notifications(monkeypatch, d
     assert saved.notification_reason == "recovery"
 
     delayed = []
-    monkeypatch.setattr(
-        notification_queue, "notify_alert",
-        lambda g, event_type: delayed.append(event_type) or 1,
-    )
-    monkeypatch.setattr(
-        notification_queue, "notify_stakeholders",
-        lambda *a, **kw: {"sent": 0},
-    )
+
+    def deliver_recovery(g, *, event_type, channel_ids, **kwargs):
+        assert g.id == group.id
+        assert event_type == "resolved"
+        assert channel_ids == {channel.id}
+        assert kwargs.get("report_channels") is True
+        assert kwargs.get("enqueue_rules") is False
+        delayed.append(event_type)
+        return {"sent": 1, "channels": {channel.id: {"status": "sent"}}}
+
+    monkeypatch.setattr(notification_queue, "notify_alert", deliver_recovery)
     AlertGroup.update(notification_due_at=utc_now() - timedelta(seconds=1)).where(
         AlertGroup.id == group.id,
     ).execute()

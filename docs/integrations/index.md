@@ -46,7 +46,7 @@ Notification channels deliver alerts after a route has matched an incoming alert
 |-----------------|--------------------------------------------------------------------------------|-----------------------------------------------|
 | Mattermost      | Chat notifications, optional ACK/Resolve/Shelve buttons, message updates              | [Mattermost channel](mattermost.md)           |
 | Telegram        | Telegram Bot API notifications, optional inline actions                        | [Telegram channel](telegram.md)               |
-| Email           | Sends email to the assigned user's profile email                               | [Email channel](email.md)                     |
+| Email           | Sends email to assignee, fallback or fixed recipient                               | [Email channel](email.md)                     |
 | Slack           | Incoming webhook or Bot API notifications with ACK/Resolve/Shelve actions and updates   | [Slack channel](slack.md)                      |
 | Feishu / Lark   | Custom bot webhook notifications with optional signature verification                   | [Feishu / Lark channel](lark.md)               |
 | Discord         | Sends notifications to a Discord webhook                                       | [Webhook-based channels](webhook-channels.md) |

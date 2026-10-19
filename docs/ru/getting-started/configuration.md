@@ -324,7 +324,7 @@ user = incidentrelay@example.com
 password = change-me
 ```
 
-Уведомления по email отправляются на адрес email из профиля назначенного пользователя.
+По умолчанию Email-канал отправляет уведомления на адрес пользователя из профиля. Можно настроить `recipient_mode` (`fallback` или `fixed`) и `recipient_email`; SMTP остаётся глобальным.
 
 ## Прокси для Telegram
 

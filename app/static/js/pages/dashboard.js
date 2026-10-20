@@ -396,15 +396,17 @@ function renderDashboardActivityTrend(alerts) {
 
 const DASHBOARD_FILTER_STORAGE_KEY = "incidentrelay.dashboard.filters.v1";
 const DASHBOARD_INVOLVEMENTS = ["assigned", "responder", "stakeholder", "any"];
-const DASHBOARD_FILTER_URL_PARAMS = ["involvement", "team_id", "service_id"];
+// Team scope is owned by the global top-bar selector, so it is not a dashboard
+// filter param; only the Active Alerts section filters live here.
+const DASHBOARD_FILTER_URL_PARAMS = ["involvement", "service_id"];
 
 let dashboardFilters = dashboardDefaultFilters();
 let dashboardFiltersInitialized = false;
-let dashboardFilterOptions = {key: null, teams: [], services: []};
+let dashboardFilterOptions = {key: null, services: []};
 let dashboardLoadSequence = 0;
 
 function dashboardDefaultFilters() {
-    return {involvement: "", teamIds: [], serviceIds: []};
+    return {involvement: "", serviceIds: []};
 }
 
 function dashboardNormalizeFilters(raw) {
@@ -412,9 +414,13 @@ function dashboardNormalizeFilters(raw) {
 
     return {
         involvement: DASHBOARD_INVOLVEMENTS.indexOf(raw.involvement) !== -1 ? raw.involvement : "",
-        teamIds: normalizeTableFilterValues(raw.teamIds),
         serviceIds: normalizeTableFilterValues(raw.serviceIds),
     };
+}
+
+function dashboardHasPersonalFilters() {
+    // The Active Alerts list narrows on these; global widgets never do.
+    return !!dashboardFilters.involvement || dashboardFilters.serviceIds.length > 0;
 }
 
 function dashboardFiltersFromUrl() {
@@ -429,7 +435,6 @@ function dashboardFiltersFromUrl() {
 
     return dashboardNormalizeFilters({
         involvement: params.get("involvement") || "",
-        teamIds: params.getAll("team_id"),
         serviceIds: params.getAll("service_id"),
     });
 }
@@ -470,7 +475,6 @@ function writeDashboardFiltersToUrl(filters) {
         url.searchParams.set("involvement", filters.involvement);
     }
 
-    appendTableFilterParams(url.searchParams, "team_id", filters.teamIds);
     appendTableFilterParams(url.searchParams, "service_id", filters.serviceIds);
 
     const nextUrl = url.pathname + url.search + url.hash;
@@ -488,18 +492,10 @@ function dashboardGlobalTeamId() {
 }
 
 function dashboardEffectiveTeamIds() {
+    // Team scope is driven solely by the global top-bar selector now; the
+    // dashboard no longer carries its own team filter.
     const globalTeamId = dashboardGlobalTeamId();
-    return globalTeamId ? [globalTeamId] : dashboardFilters.teamIds;
-}
-
-function dashboardMemberTeamIds() {
-    return dashboardFilterOptions.teams
-        .filter(function (team) {
-            return team.is_member === true;
-        })
-        .map(function (team) {
-            return String(team.id);
-        });
+    return globalTeamId ? [globalTeamId] : [];
 }
 
 function dashboardFilterOptionsKey() {
@@ -514,52 +510,22 @@ function loadDashboardFilterOptions(callback) {
         return;
     }
 
-    let pending = 2;
-    let failed = false;
-    const result = {teams: [], services: []};
-
-    function done() {
-        pending -= 1;
-
-        if (pending > 0) {
-            return;
-        }
-
-        if (!failed) {
-            dashboardFilterOptions = {key: key, teams: result.teams, services: result.services};
-        }
-
-        renderDashboardFilterOptions();
-        callback(!failed);
-    }
-
-    function fail() {
-        failed = true;
-        done();
-    }
-
-    apiGet("/api/teams", function (teams) {
-        result.teams = dashboardAsArray(teams);
-        done();
-    }, fail);
-
     apiGet("/api/services", function (services) {
-        result.services = dashboardAsArray(services).filter(function (service) {
-            return service.enabled !== false;
-        });
-        done();
-    }, fail);
+        dashboardFilterOptions = {
+            key: key,
+            services: dashboardAsArray(services).filter(function (service) {
+                return service.enabled !== false;
+            }),
+        };
+        renderDashboardFilterOptions();
+        callback(true);
+    }, function () {
+        renderDashboardFilterOptions();
+        callback(false);
+    });
 }
 
 function renderDashboardFilterOptions() {
-    replaceTableSelectOptions(
-        "#dashboard-team-filter",
-        dashboardFilterOptions.teams.map(function (team) {
-            return {value: String(team.id), text: team.name || team.slug || String(team.id)};
-        }),
-        dashboardFilters.teamIds
-    );
-
     replaceTableSelectOptions(
         "#dashboard-service-filter",
         dashboardFilterOptions.services.map(function (service) {
@@ -578,51 +544,53 @@ function renderDashboardFilterOptions() {
 function dashboardDropUnknownFilterIds(filters) {
     /*
      * Drop saved or shared ids that the user can no longer see, so the
-     * alerts API is never asked for an unreadable team.
+     * alert-groups API is never asked for an unreadable service.
      */
-    const teamIds = dashboardFilterOptions.teams.map(function (team) {
-        return String(team.id);
-    });
     const serviceIds = dashboardFilterOptions.services.map(function (service) {
         return String(service.id);
     });
 
     return {
         involvement: filters.involvement,
-        teamIds: filters.teamIds.filter(function (id) {
-            return teamIds.indexOf(String(id)) !== -1;
-        }),
         serviceIds: filters.serviceIds.filter(function (id) {
             return serviceIds.indexOf(String(id)) !== -1;
         }),
     };
 }
 
+function dashboardActiveFilterCount() {
+    // Count the advanced refinements hidden inside the Filters disclosure that
+    // the My/All toggle does not already make obvious.
+    let count = dashboardFilters.serviceIds.length;
+    if (dashboardFilters.involvement && dashboardFilters.involvement !== "any") {
+        count += 1;
+    }
+    return count;
+}
+
+function dashboardSetFiltersPanel(open) {
+    $("#dashboard-filters-panel").toggleClass("is-hidden", !open);
+    $("#dashboard-filters-toggle").attr("aria-expanded", open ? "true" : "false");
+}
+
 function syncDashboardFilterControls() {
-    const globalTeamId = dashboardGlobalTeamId();
-    const teamSelect = $("#dashboard-team-filter");
-    const teamSelectControl = teamSelect.length ? teamSelect[0].tomselect : null;
+    const mine = !!dashboardFilters.involvement;
+
+    $("#dashboard-scope-mine")
+        .attr("aria-pressed", mine ? "true" : "false")
+        .toggleClass("is-active", mine);
+    $("#dashboard-scope-all")
+        .attr("aria-pressed", mine ? "false" : "true")
+        .toggleClass("is-active", !mine);
 
     $("#dashboard-involvement-filter").val(dashboardFilters.involvement);
-
-    setTableFilterValues(teamSelect, dashboardEffectiveTeamIds());
-
-    if (teamSelectControl) {
-        if (globalTeamId) {
-            teamSelectControl.disable();
-        } else {
-            teamSelectControl.enable();
-        }
-    }
-    teamSelect.prop("disabled", !!globalTeamId);
-
-    $("#dashboard-team-filter-hint").toggleClass("is-hidden", !globalTeamId);
-    $("#dashboard-my-teams").prop(
-        "disabled",
-        !!globalTeamId || !dashboardMemberTeamIds().length
-    );
-
     setTableFilterValues("#dashboard-service-filter", dashboardFilters.serviceIds);
+
+    const count = dashboardActiveFilterCount();
+    $("#dashboard-filters-count")
+        .text(count ? String(count) : "")
+        .toggleClass("is-hidden", count === 0);
+    $("#dashboard-filters-toggle").toggleClass("has-active", count > 0);
 }
 
 function updateDashboardViewAllLinks() {
@@ -635,7 +603,10 @@ function updateDashboardViewAllLinks() {
 
     appendTableFilterParams(params, "service_id", dashboardFilters.serviceIds);
 
-    if (dashboardFilters.involvement === "assigned") {
+    // /alerts exposes only assigned_to_me, not the finer responder/stakeholder
+    // involvement, so any "My Alerts" selection carries over as its closest
+    // equivalent.
+    if (dashboardFilters.involvement) {
         params.set("assigned_to_me", "true");
     }
 
@@ -653,17 +624,26 @@ function applyDashboardFilters() {
 function bindDashboardFilterEvents() {
     $(document)
         .off(".dashboardFilters")
+        .on("click.dashboardFilters", "#dashboard-scope-mine", function () {
+            if (!dashboardFilters.involvement) {
+                dashboardFilters.involvement = "any";
+            }
+            syncDashboardFilterControls();
+            applyDashboardFilters();
+        })
+        .on("click.dashboardFilters", "#dashboard-scope-all", function () {
+            dashboardFilters.involvement = "";
+            syncDashboardFilterControls();
+            applyDashboardFilters();
+        })
+        .on("click.dashboardFilters", "#dashboard-filters-toggle", function () {
+            dashboardSetFiltersPanel($(this).attr("aria-expanded") !== "true");
+        })
         .on("change.dashboardFilters", "#dashboard-involvement-filter", function () {
             dashboardFilters.involvement = dashboardNormalizeFilters({
                 involvement: $(this).val(),
             }).involvement;
-            applyDashboardFilters();
-        })
-        .on("change.dashboardFilters", "#dashboard-team-filter", function () {
-            if (isTableFilterSilent(this) || dashboardGlobalTeamId()) {
-                return;
-            }
-            dashboardFilters.teamIds = getTableFilterValues(this);
+            syncDashboardFilterControls();
             applyDashboardFilters();
         })
         .on("change.dashboardFilters", "#dashboard-service-filter", function () {
@@ -671,10 +651,6 @@ function bindDashboardFilterEvents() {
                 return;
             }
             dashboardFilters.serviceIds = getTableFilterValues(this);
-            applyDashboardFilters();
-        })
-        .on("click.dashboardFilters", "#dashboard-my-teams", function () {
-            dashboardFilters.teamIds = dashboardMemberTeamIds();
             syncDashboardFilterControls();
             applyDashboardFilters();
         })
@@ -705,6 +681,7 @@ function loadDashboard() {
         }
 
         syncDashboardFilterControls();
+        dashboardSetFiltersPanel(dashboardActiveFilterCount() > 0);
         applyDashboardFilters();
     });
 }
@@ -713,21 +690,18 @@ function fetchDashboardData() {
     const sequence = ++dashboardLoadSequence;
     const generation = ++dashboardLoadGeneration;
     let delayedIndicator = null;
-    const params = [];
 
-    // Team scope is carried by dashboardEffectiveTeamIds() (which folds in the
-    // global team selector), so no separate selectedTeamId param is needed.
-    appendTableFilterParams(params, "team_id", dashboardEffectiveTeamIds());
-    appendTableFilterParams(params, "service_id", dashboardFilters.serviceIds);
+    // Baseline scope: the global top-bar team selector only. Every global widget
+    // (KPIs, charts, System Status, team summary) reads this set, so the personal
+    // Active Alerts filters never change the overall operational picture.
+    const baseParams = [];
+    appendTableFilterParams(baseParams, "team_id", dashboardEffectiveTeamIds());
+    baseParams.push("page=1");
+    baseParams.push("page_size=100");
+    baseParams.push("sort=activity");
+    baseParams.push("order=desc");
 
-    if (dashboardFilters.involvement) {
-        params.push("involvement=" + encodeURIComponent(dashboardFilters.involvement));
-    }
-
-    params.push("page=1");
-    params.push("page_size=100");
-    params.push("sort=activity");
-    params.push("order=desc");
+    const personalFilters = dashboardHasPersonalFilters();
 
     if (window.AppLoading) {
         if (!dashboardHasLoaded) {
@@ -760,28 +734,12 @@ function fetchDashboardData() {
         }
     }
 
-    // /api/alert-groups is the alert-group list endpoint; it understands the
-    // involvement / team_id / service_id filters added by this feature.
-    apiGet("/api/alert-groups?" + params.join("&"), function (response) {
-        if (generation !== dashboardLoadGeneration) {
-            return;
-        }
+    function renderActiveAlerts(alerts) {
+        const sorted = dashboardSortByActivity(dashboardActiveAlerts(alerts));
+        renderDashboardAlertsTable(sorted.slice(0, 8));
+    }
 
-        const alerts = dashboardAsArray(response);
-        const activeAlerts = dashboardActiveAlerts(alerts);
-        const sortedActiveAlerts = dashboardSortByActivity(activeAlerts);
-
-        dashboardHasLoaded = true;
-        dashboardLastAlerts = alerts.slice();
-        finishDashboardLoading();
-        renderAlertsSummaryGrid("#overview-alerts-summary", alerts);
-        renderDashboardActivityTrend(alerts);
-        renderDashboardAlertsTable(sortedActiveAlerts.slice(0, 8));
-        renderDashboardSeveritySplit(alerts);
-        renderDashboardPrioritySplit(alerts);
-        renderDashboardTeamSummary(alerts);
-        renderDashboardSystemStatus(alerts, activeAlerts);
-    }, function (xhr) {
+    function handleError(xhr) {
         if (generation !== dashboardLoadGeneration) {
             return;
         }
@@ -791,7 +749,54 @@ function fetchDashboardData() {
             $("#dashboard-alerts").empty();
         }
         showApiError(xhr);
-    });
+    }
+
+    // /api/alert-groups is the alert-group list endpoint; it understands the
+    // involvement / team_id / service_id filters added by this feature.
+    apiGet("/api/alert-groups?" + baseParams.join("&"), function (response) {
+        if (generation !== dashboardLoadGeneration) {
+            return;
+        }
+
+        const alerts = dashboardAsArray(response);
+        const activeAlerts = dashboardActiveAlerts(alerts);
+
+        dashboardHasLoaded = true;
+        dashboardLastAlerts = alerts.slice();
+        renderAlertsSummaryGrid("#overview-alerts-summary", alerts);
+        renderDashboardActivityTrend(alerts);
+        renderDashboardSeveritySplit(alerts);
+        renderDashboardPrioritySplit(alerts);
+        renderDashboardTeamSummary(alerts);
+        renderDashboardSystemStatus(alerts, activeAlerts);
+
+        // Without a personal filter the Active Alerts table shows the same set,
+        // so reuse this response instead of issuing an identical request.
+        if (!personalFilters) {
+            finishDashboardLoading();
+            renderActiveAlerts(alerts);
+        }
+    }, handleError);
+
+    // Filtered scope: team + personal filters. Feeds the Active Alerts table
+    // only, leaving every global widget above untouched.
+    if (personalFilters) {
+        const activeParams = baseParams.slice();
+        if (dashboardFilters.involvement) {
+            activeParams.push("involvement=" + encodeURIComponent(dashboardFilters.involvement));
+        }
+        appendTableFilterParams(activeParams, "service_id", dashboardFilters.serviceIds);
+
+        apiGet("/api/alert-groups?" + activeParams.join("&"), function (response) {
+            if (generation !== dashboardLoadGeneration) {
+                return;
+            }
+
+            finishDashboardLoading();
+            renderActiveAlerts(dashboardAsArray(response));
+        }, handleError);
+    }
+
     loadDashboardServiceImpact(sequence);
     loadDashboardOncall();
     loadDashboardActivity(generation);
@@ -1578,18 +1583,13 @@ function dashboardImpactRows(rows) {
 
 function dashboardFilterImpactRows(rows) {
     /*
-     * Service impact follows the team and service filters only; involvement
-     * describes personal work, not service health.
+     * Service health reflects the whole fleet within the global team scope; the
+     * personal Active Alerts filters (involvement / service) never narrow it.
      */
     const teamIds = dashboardEffectiveTeamIds().map(String);
-    const serviceIds = dashboardFilters.serviceIds.map(String);
 
     return dashboardAsArray(rows).filter(function (row) {
-        if (teamIds.length && teamIds.indexOf(String(row.team_id)) === -1) {
-            return false;
-        }
-
-        return !serviceIds.length || serviceIds.indexOf(String(row.service_id)) !== -1;
+        return !teamIds.length || teamIds.indexOf(String(row.team_id)) !== -1;
     });
 }
 

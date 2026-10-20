@@ -52,6 +52,12 @@ function loadServiceDetails(serviceId) {
         function (payload) {
             serviceDetailsCache[cacheKey] = payload;
             renderServiceDetailsPayload(payload);
+        },
+        function (xhr) {
+            if (window.AppLoading) {
+                AppLoading.clear("#service-details-modal-body");
+            }
+            showApiError(xhr);
         }
     );
 }
@@ -67,11 +73,19 @@ function renderServiceDetailsLoading(service) {
         (service.status || "unknown")
     );
 
+    const loadingMessage =
+        "Loading service details for " + (service.name || service.slug || "service") + "...";
+
+    if (window.AppLoading) {
+        AppLoading.showBlock(body, loadingMessage);
+        return;
+    }
+
     body.empty();
     body.append(
         $("<div>")
             .addClass("empty-state")
-            .text("Loading service details for " + (service.name || service.slug || "service") + "...")
+            .text(loadingMessage)
     );
 }
 
@@ -1616,6 +1630,13 @@ function renderServiceOrchestrationAssignments(payload) {
 
 function renderServiceDetailsHero(payload) {
     const service = payload.service || {};
+    const priorityResolution = payload.priority_policy_resolution || {};
+    const prioritySource = priorityResolution.source === "service_override"
+        ? "Service override" : priorityResolution.source === "team_default"
+            ? "Team default" : "Severity fallback";
+    const priorityLabel = priorityResolution.name
+        ? priorityResolution.name + " (" + prioritySource + ")"
+        : prioritySource;
     const section = serviceDetailsSection(
         "Overview",
         service.description || service.slug || "No description"
@@ -1647,9 +1668,13 @@ function renderServiceDetailsHero(payload) {
             .append(
                 serviceDetailsCompactCard("Defaults", [
                     ["Default rotation", service.default_rotation_name],
-                    ["Escalation policy", service.default_escalation_policy_name],
-                    ["Notification policy", service.notification_policy_name],
-                    ["Priority policy", service.priority_policy_name || "Team default"],
+                    ["Escalation default", service.default_escalation_policy_name
+                        ? service.default_escalation_policy_name + " (Service default; route may override)"
+                        : "Route / rotation selection"],
+                    ["Notification policy", service.notification_policy_name
+                        ? service.notification_policy_name + " (Service setting; route mode controls usage)"
+                        : "Route channels / none"],
+                    ["Current priority policy", priorityLabel],
                     [i18n.t("services.details.event_orchestrations"), renderServiceOrchestrationAssignments(payload)],
                     ["Maintenance", window.AppMaintenanceBadges.text(service, "-")],
                 ])

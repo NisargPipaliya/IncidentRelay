@@ -88,6 +88,15 @@
   "orchestrations.executions.matches": "Matched rules",
   "orchestrations.executions.duration": "Duration",
   "orchestrations.executions.created": "Created",
+  "orchestrations.executions.notes": "Notes",
+  "orchestrations.executions.trace_views": "Execution trace views",
+  "orchestrations.executions.candidate_event": "Evaluated event (candidate)",
+  "orchestrations.executions.candidate_targets": "Candidate targets",
+  "orchestrations.executions.mode": "Mode",
+  "orchestrations.executions.application": "Applied to event",
+  "orchestrations.executions.applied": "Applied",
+  "orchestrations.executions.not_applied": "Not applied",
+  "orchestrations.executions.candidate_actual": "Candidate → actual lifecycle result",
   "orchestrations.webhooks.title": "Webhook actions",
   "orchestrations.webhooks.help": "Reusable encrypted outbound actions executed asynchronously.",
   "orchestrations.webhooks.name": "Name",
@@ -224,5 +233,8 @@
   "orchestrations.simulator.active_draft_changes": "Active → draft",
   "orchestrations.edit.title": "Edit event orchestration",
   "orchestrations.edit.help": "Update metadata, scope and runtime settings.",
-  "orchestrations.simulator.alert_event_history": "Alert event history"
+  "orchestrations.simulator.alert_event_history": "Alert event history",
+  "orchestrations.rule_editor.reopen_window_placeholder": "Reopen grace (seconds; 0 disables)",
+  "orchestrations.rule_editor.reopen_window_label": "Reopen grace (seconds)",
+  "orchestrations.rule_editor.reopen_window_help": "Reuse a recently resolved AlertGroup for a new matching firing event. Independent of grouping window; default disabled."
 }

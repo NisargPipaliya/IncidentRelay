@@ -37,7 +37,7 @@
     </div>
   </div>
 
-  <div class="page-layout-grid">
+  <div class="page-layout-grid is-full-width">
     <section class="card page-layout-main">
       <div class="card-header">
         <div>
@@ -114,9 +114,15 @@
         </table>
       </div>
     </section>
+  </div>
 
-    <aside class="card page-details-card">
-      <div class="card-header">
+  <div
+    id="notification-policy-details-modal"
+    class="app-modal"
+    style="display: none;"
+  >
+    <div class="app-modal-dialog app-modal-dialog-medium">
+      <div class="app-modal-header">
         <div>
           <h2>{{ _("notification_policies.details.title") }}</h2>
           <div
@@ -126,14 +132,24 @@
             {{ _("notification_policies.details.select") }}
           </div>
         </div>
+
+        <button
+          id="close-notification-policy-details-modal"
+          type="button"
+          class="app-modal-close"
+          data-modal-close="#notification-policy-details-modal"
+          aria-label="{{ _('notification_policies.actions.close') }}"
+        >
+          ×
+        </button>
       </div>
 
-      <div id="notification-policy-details-body" class="details-body">
+      <div id="notification-policy-details-body" class="app-modal-body">
         <div class="details-empty">
           {{ _("notification_policies.details.help") }}
         </div>
       </div>
-    </aside>
+    </div>
   </div>
 
   <div

@@ -326,6 +326,8 @@ function fillRouteSourceFilter(routes) {
         new_relic: true,
         nagios: true,
         grafana: true,
+        opensearch: true,
+        kibana: true,
         rmon: true,
         heartbeat: true,
         zabbix: true,
@@ -1098,6 +1100,16 @@ function getSentryWebhookUrl(route) {
     return window.location.origin + path;
 }
 
+function getRouteCloudRuConfig(route) {
+    const integrationConfig = (
+        route && route.integration_config
+            ? route.integration_config
+            : {}
+    );
+
+    return integrationConfig.cloud_ru || {};
+}
+
 function getRouteAwsSnsConfig(route) {
     const integrationConfig = (
         route && route.integration_config
@@ -1117,7 +1129,10 @@ function updateRouteSourceUi() {
     const isAwsSns = source === "aws_sns";
     const isDatadog = source === "datadog";
     const isNewRelic = source === "new_relic";
+    const isOpenSearch = source === "opensearch";
+    const isKibana = source === "kibana";
     const isAzureMonitor = source === "azure_monitor";
+    const isCloudRu = source === "cloud_ru";
     const isNagios = source === "nagios";
     const isUptimeKuma = source === "uptime_kuma";
     const isWebhook = source === "webhook";
@@ -1135,9 +1150,15 @@ function updateRouteSourceUi() {
         "is-hidden",
         !isNewRelic
     );
+    $("#route-opensearch-help").toggleClass("is-hidden", !isOpenSearch);
+    $("#route-kibana-help").toggleClass("is-hidden", !isKibana);
     $("#route-azure-monitor-help").toggleClass(
         "is-hidden",
         !isAzureMonitor
+    );
+    $("#route-cloud-ru-help").toggleClass(
+        "is-hidden",
+        !isCloudRu
     );
     $("#route-nagios-help").toggleClass(
         "is-hidden",
@@ -1146,6 +1167,17 @@ function updateRouteSourceUi() {
     $("#route-uptime-kuma-help").toggleClass(
         "is-hidden",
         !isUptimeKuma
+    );
+
+    $("#route-cloud-ru-settings").toggleClass("is-hidden", !isCloudRu);
+    $("#route-cloud-ru-topic-urn").prop("required", isCloudRu);
+
+    const hasCloudRuWebhook = Boolean(
+        String($("#route-cloud-ru-webhook-url").val() || "").trim()
+    );
+    $("#route-cloud-ru-webhook-group").toggleClass(
+        "is-hidden",
+        !isCloudRu || !hasCloudRuWebhook
     );
 
     $("#route-aws-sns-settings").toggleClass("is-hidden", !isAwsSns);
@@ -1172,6 +1204,14 @@ function updateRouteSourceUi() {
             $("#route-group-by").val(
                 '["alertname","grafana_folder","instance"]'
             );
+        } else if (source === "opensearch") {
+            $("#route-group-by").val(
+                '["opensearch_monitor_id","opensearch_trigger_id","opensearch_bucket_key"]'
+            );
+        } else if (source === "kibana") {
+            $("#route-group-by").val(
+                '["kibana_rule_id","kibana_alert_id"]'
+            );
         } else if (source === "datadog") {
             $("#route-group-by").val(
                 '["datadog_alert_id","datadog_scope"]'
@@ -1183,6 +1223,10 @@ function updateRouteSourceUi() {
         } else if (source === "azure_monitor") {
             $("#route-group-by").val(
                 '["azure_alert_id"]'
+            );
+        } else if (source === "cloud_ru") {
+            $("#route-group-by").val(
+                '["cloud_ru_alarm_id"]'
             );
         } else if (source === "nagios") {
             $("#route-group-by").val(
@@ -1206,6 +1250,16 @@ function updateRouteSourceUi() {
 
 function collectRouteIntegrationConfig() {
     const source = $("#route-source").val();
+
+    if (source === "cloud_ru") {
+        return {
+            cloud_ru: {
+                topic_urn: String(
+                    $("#route-cloud-ru-topic-urn").val() || ""
+                ).trim()
+            }
+        };
+    }
 
     if (source === "aws_sns") {
         return {
@@ -1376,6 +1430,10 @@ function editRoute(id) {
         route.integration_config || {}
     );
 
+    const cloudRuConfig = (
+        integrationConfig.cloud_ru || {}
+    );
+
     const awsSnsConfig = (
         integrationConfig.aws_sns || {}
     );
@@ -1383,6 +1441,20 @@ function editRoute(id) {
     const sentryConfig = (
         integrationConfig.sentry || {}
     );
+
+    $("#route-cloud-ru-topic-urn").val(
+        cloudRuConfig.topic_urn || ""
+    );
+    const cloudRuWebhookPath = cloudRuConfig.webhook_path || "";
+    if (route.source === "cloud_ru" && cloudRuWebhookPath) {
+        $("#route-cloud-ru-webhook-url").val(
+            window.location.origin + cloudRuWebhookPath
+        );
+        $("#route-cloud-ru-webhook-group").removeClass("is-hidden");
+    } else {
+        $("#route-cloud-ru-webhook-url").val("");
+        $("#route-cloud-ru-webhook-group").addClass("is-hidden");
+    }
 
     $("#route-aws-sns-topic-arn").val(
         awsSnsConfig.topic_arn || ""
@@ -1510,6 +1582,9 @@ function resetRouteForm() {
     $("#route-service").val("");
     fillMatcherPresetSelect("#route-matcher-preset", routeMatcherPresetsCache, null);
     updateRouteMatcherPresetHint();
+    $("#route-cloud-ru-topic-urn").val("");
+    $("#route-cloud-ru-webhook-url").val("");
+    $("#route-cloud-ru-webhook-group").addClass("is-hidden");
     $("#route-aws-sns-topic-arn").val("");
     $("#route-aws-sns-webhook-url").val("");
     $("#route-aws-sns-webhook-group").addClass("is-hidden");
@@ -1530,6 +1605,14 @@ function getRouteIntakePath(route) {
         return "/api/integrations/sentry/" + route.id;
     }
 
+    if (source === "cloud_ru") {
+        const cloudRuConfig = getRouteCloudRuConfig(route);
+        return (
+            cloudRuConfig.webhook_path
+            || ("/api/integrations/cloud-ru/" + route.id)
+        );
+    }
+
     if (source === "aws_sns") {
         const awsSnsConfig = getRouteAwsSnsConfig(route);
 
@@ -1541,6 +1624,14 @@ function getRouteIntakePath(route) {
 
     if (source === "alertmanager") {
         return "/api/integrations/alertmanager";
+    }
+
+    if (source === "cloud_ru") {
+        return [
+            "# " + i18n.t("routes.intake.cloud_ru_example_comment"),
+            "# " + i18n.t("routes.intake.cloud_ru_help"),
+            "# Endpoint: " + url
+        ].join("\n");
     }
 
     if (source === "heartbeat") {
@@ -1617,6 +1708,26 @@ function buildRouteIntakeCurl(route, token) {
         ].join("\n");
     }
 
+    if (source === "opensearch") {
+        return [
+            "# " + i18n.t("routes.intake.opensearch_example_comment"),
+            `curl -X POST '${url}' \\`,
+            "  -H 'Content-Type: application/json' \\",
+            `  -H 'Authorization: Bearer ${token || "<route-token>"}' \\`,
+            "  -d '{\"monitor_id\":\"monitor-123\",\"trigger_id\":\"trigger-1\",\"monitor_name\":\"Error rate\",\"trigger_name\":\"Error rate exceeded\",\"status\":\"ACTIVE\",\"severity\":\"2\",\"message\":\"Error rate exceeded 5%\"}'"
+        ].join("\n");
+    }
+
+    if (source === "kibana") {
+        return [
+            "# " + i18n.t("routes.intake.kibana_example_comment"),
+            `curl -X POST '${url}' \\`,
+            "  -H 'Content-Type: application/json' \\",
+            `  -H 'Authorization: Bearer ${token || "<route-token>"}' \\`,
+            "  -d '{\"rule_id\":\"rule-123\",\"alert_id\":\"instance-api-1\",\"rule_name\":\"API errors\",\"status\":\"active\",\"severity\":\"critical\",\"message\":\"Error rate exceeded 5%\"}'"
+        ].join("\n");
+    }
+
     if (source === "new_relic") {
         return [
             "# " + i18n.t("routes.intake.new_relic_example_comment"),
@@ -1687,7 +1798,10 @@ function showRouteIntakeDetails(route) {
     const isHeartbeat = source === "heartbeat";
     const isDatadog = source === "datadog";
     const isNewRelic = source === "new_relic";
+    const isOpenSearch = source === "opensearch";
+    const isKibana = source === "kibana";
     const isAzureMonitor = source === "azure_monitor";
+    const isCloudRu = source === "cloud_ru";
     const isNagios = source === "nagios";
     const isUptimeKuma = source === "uptime_kuma";
     const isWebhook = source === "webhook";
@@ -1711,9 +1825,18 @@ function showRouteIntakeDetails(route) {
     } else if (isNewRelic) {
         subtitleKey = "routes.intake.new_relic_subtitle";
         helpKey = "routes.intake.new_relic_help";
+    } else if (source === "opensearch") {
+        subtitleKey = "routes.intake.opensearch_subtitle";
+        helpKey = "routes.intake.opensearch_help";
+    } else if (source === "kibana") {
+        subtitleKey = "routes.intake.kibana_subtitle";
+        helpKey = "routes.intake.kibana_help";
     } else if (isAzureMonitor) {
         subtitleKey = "routes.intake.azure_monitor_subtitle";
         helpKey = "routes.intake.azure_monitor_help";
+    } else if (isCloudRu) {
+        subtitleKey = "routes.intake.cloud_ru_subtitle";
+        helpKey = "routes.intake.cloud_ru_help";
     } else if (isNagios) {
         subtitleKey = "routes.intake.nagios_subtitle";
         helpKey = "routes.intake.nagios_help";
@@ -1736,8 +1859,8 @@ function showRouteIntakeDetails(route) {
     $("#route-intake-token").val(token);
     $("#route-intake-curl").val(buildRouteIntakeCurl(route, token));
 
-    $("#route-intake-token-group").toggleClass("is-hidden", isSentry || isHeartbeat);
-    $("#copy-route-intake-token").toggleClass("is-hidden", isSentry || isHeartbeat);
+    $("#route-intake-token-group").toggleClass("is-hidden", isSentry || isHeartbeat || isCloudRu);
+    $("#copy-route-intake-token").toggleClass("is-hidden", isSentry || isHeartbeat || isCloudRu);
     $("#route-intake-url-help").text(i18n.t(helpKey));
 
     openAppModal("#route-token-box");

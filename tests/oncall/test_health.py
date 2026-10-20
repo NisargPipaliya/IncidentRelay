@@ -1,11 +1,4 @@
-"""
-Tests for liveness (/healthz) and readiness (/readyz) probes.
-
-These endpoints exist outside the /api/ namespace so they are reachable
-without authentication (Kubernetes/HAProxy/ELB probes can't carry
-credentials). Behaviour is asserted directly here so regressions don't
-silently break load balancer integration.
-"""
+"""Tests for liveness (/healthz) and readiness (/readyz) probes."""
 
 from unittest.mock import patch
 
@@ -34,19 +27,13 @@ def test_healthz_does_not_require_authentication(client):
 
 
 def test_healthz_returns_200_even_when_database_is_unreachable(client):
-    """
-    Liveness must NOT depend on the database. A DB outage should not cause
-    Kubernetes to restart the pod, since restarting would not help.
-    """
+    """Liveness must not depend on the database."""
     with patch(
-        "app.views.health_view.init_database",
+        "app.services.readiness.init_database",
         side_effect=RuntimeError("simulated DB outage"),
     ):
         response = client.get("/healthz")
 
-    # /healthz never even calls init_database, but the patch above guarantees
-    # that if a future refactor accidentally introduced a DB call, this test
-    # would catch it.
     assert response.status_code == 200
     assert response.get_json() == {"status": "ok"}
 
@@ -57,10 +44,7 @@ def test_healthz_returns_200_even_when_database_is_unreachable(client):
 
 
 def test_readyz_returns_200_when_database_and_migrations_are_ok(client):
-    """
-    Happy path: tests/conftest.py applies all migrations before the test, so
-    /readyz should report database=ok, no pending migrations and status=ready.
-    """
+    """Migrated and reachable database reports ready."""
     response = client.get("/readyz")
 
     assert response.status_code == 200
@@ -77,15 +61,12 @@ def test_readyz_does_not_require_authentication(client):
     """/readyz must be reachable without credentials too."""
     response = client.get("/readyz")
 
-    # Either 200 (ready) or 503 (not ready), but NOT 401/403 — auth is bypassed.
+    # Either 200 or 503, but never 401/403: auth is bypassed.
     assert response.status_code in (200, 503)
 
 
 def test_readyz_returns_503_when_database_select_fails(client):
-    """
-    When SELECT 1 raises, readyz reports database=error, status=not_ready
-    and HTTP 503 — so the load balancer drops this pod from the rotation.
-    """
+    """A failing SELECT 1 reports not_ready with 503."""
     def boom(*args, **kwargs):
         raise RuntimeError("connection refused")
 
@@ -103,24 +84,20 @@ def test_readyz_returns_503_when_database_select_fails(client):
     assert body["database"] == "error"
     assert body["database_error"] == "database check failed"
     assert "connection refused" not in response.get_data(as_text=True)
-    # Migration check is skipped when the DB is down — it would be pointless.
+    # Migration check is skipped when the DB is down, it would be pointless.
     assert "migrations" not in body
 
 
 def test_readyz_returns_503_when_pending_migrations_exist(client):
-    """
-    When on-disk migration files exist that are not yet applied, /readyz
-    reports them in body.migrations.pending and returns 503.
-    """
+    """Pending migrations are reported and answered with 503."""
     # Pretend there's a new migration file on disk that hasn't been applied.
     fake_new_file = "29990101000000_simulated_pending_migration.py"
 
-    real_files = None
-    from app.views import health_view
-    real_files = health_view.get_migration_files()
+    from app.services import readiness
+    real_files = readiness.get_migration_files()
 
     with patch(
-        "app.views.health_view.get_migration_files",
+        "app.services.readiness.get_migration_files",
         return_value=list(real_files) + [fake_new_file],
     ):
         response = client.get("/readyz")
@@ -142,7 +119,7 @@ def test_readyz_returns_503_when_migration_check_raises(client):
     crashing the request handler.
     """
     with patch(
-        "app.views.health_view.get_migration_files",
+        "app.services.readiness.get_migration_files",
         side_effect=OSError("disk gone"),
     ):
         response = client.get("/readyz")
@@ -155,6 +132,50 @@ def test_readyz_returns_503_when_migration_check_raises(client):
     assert "error" in body["migrations"]
     assert body["migrations"]["error"] == "migration check failed"
     assert "disk gone" not in response.get_data(as_text=True)
+
+
+def test_probe_keeps_connection_open_between_checks():
+    """Both checks run on one connection, closed again afterwards."""
+    from app.services.readiness import run_readiness_probe
+
+    class _ConnectionTrackingDatabase:
+        def __init__(self):
+            self._closed = True
+            self.close_calls = 0
+
+        def is_closed(self):
+            return self._closed
+
+        def connect(self, reuse_if_open=False):
+            self._closed = False
+
+        def execute_sql(self, query):
+            pass
+
+        def close(self):
+            self.close_calls += 1
+            self._closed = True
+
+    database = _ConnectionTrackingDatabase()
+
+    def applied_migrations():
+        assert not database.is_closed(), "migration check ran on a closed connection"
+        return []
+
+    with patch(
+        "app.services.readiness.init_database", lambda: database
+    ), patch(
+        "app.services.readiness.get_applied_migrations", applied_migrations
+    ), patch(
+        "app.services.readiness.get_migration_files", lambda: []
+    ):
+        probe = run_readiness_probe()
+
+    assert probe.database_error is None
+    assert probe.migration_error is None
+    # The probe opened the connection, so it closes it again, exactly once.
+    assert database.close_calls == 1
+    assert database.is_closed()
 
 
 # ---------------------------------------------------------------------------

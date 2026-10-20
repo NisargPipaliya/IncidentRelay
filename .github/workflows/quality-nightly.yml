@@ -128,7 +128,7 @@ jobs:
             mypy-report.txt
             vulture-report.txt
           if-no-files-found: ignore
-          retention-days: 14
+          retention-days: 1
 
       - name: Enforce blocking static analysis
         if: always()

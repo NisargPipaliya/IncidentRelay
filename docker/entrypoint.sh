@@ -9,6 +9,15 @@ fi
 CONFIG_FILE="${INCIDENTRELAY_CONFIG_FILE:-${INCEDENTRELAY_CONFIG_FILE:-/etc/incidentrelay/incidentrelay.conf}}"
 SERVICE="${INCIDENTRELAY_SERVICE:-web}"
 
+# The image has a real home directory for UID 10001. Arbitrary non-root UIDs
+# (e.g. OpenShift or docker run --user) may not be able to write there; avoid
+# gunicorn attempting to create /.gunicorn or writing to an inaccessible HOME.
+if [ "$(id -u)" -ne 0 ]; then
+  if [ -z "${HOME:-}" ] || [ ! -d "$HOME" ] || [ ! -w "$HOME" ]; then
+    export HOME=/tmp
+  fi
+fi
+
 if [ ! -f "$CONFIG_FILE" ]; then
   echo "Config file not found: $CONFIG_FILE"
   exit 1
@@ -17,18 +26,29 @@ fi
 # The stock image config intentionally contains no reusable authentication
 # secrets. Create one persistent runtime config on the shared data volume so
 # web/scheduler/notifier processes all use the same random keys across restarts.
+# The runtime config is rebuilt from the mounted config on every start, so
+# config changes take effect; shared keys the mounted config leaves empty are
+# carried over from the previous copy.
 if [ "$CONFIG_FILE" = "/etc/incidentrelay/incidentrelay.conf" ]; then
   RUNTIME_CONFIG="/var/lib/incidentrelay/incidentrelay.conf"
   python - "$CONFIG_FILE" "$RUNTIME_CONFIG" <<'PY_CONFIG'
 import configparser
 import fcntl
+import hashlib
+import hmac
 import os
 import secrets
 import sys
 import tempfile
 
 source, target = sys.argv[1], sys.argv[2]
-os.makedirs(os.path.dirname(target), exist_ok=True)
+KEY_CHECK_ITERATIONS = 200_000
+target_dir = os.path.dirname(target)
+os.makedirs(target_dir, exist_ok=True)
+# Do not let a writable volume redirect privileged initialization through
+# symlinks to files outside the runtime directory.
+dir_fd = os.open(target_dir, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+os.close(dir_fd)
 lock_path = target + ".lock"
 known_insecure = {
     "",
@@ -39,24 +59,128 @@ known_insecure = {
     "change-this-mattermost-action-secret",
 }
 
-with open(lock_path, "a+", encoding="utf-8") as lock_file:
+lock_fd = os.open(lock_path, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+with os.fdopen(lock_fd, "r+", encoding="utf-8") as lock_file:
     fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
     parser = configparser.ConfigParser()
     parser.optionxform = str
-    parser.read(target if os.path.exists(target) else source)
+    parser.read(source)
+    stored = configparser.ConfigParser()
+    stored.optionxform = str
+    try:
+        stored_fd = os.open(target, os.O_RDONLY | os.O_NOFOLLOW)
+    except FileNotFoundError:
+        pass
+    else:
+        with os.fdopen(stored_fd, "r", encoding="utf-8") as previous_config:
+            stored.read_file(previous_config)
 
-    def ensure_secret(section, option):
+    def from_env(section, option):
+        # Keys passed as INCIDENTRELAY__<SECTION>__<OPTION>[__FILE] are read
+        # by the application from the environment.
+        env_name = f"INCIDENTRELAY__{section}__{option}".upper()
+        return env_name in os.environ or env_name + "__FILE" in os.environ
+
+    secret_key_from_env = from_env("main", "secret_key")
+
+    def ensure_secret(section, option, inherits_secret_key=True):
+        if from_env(section, option):
+            return
         if not parser.has_section(section):
             parser.add_section(section)
         current = parser.get(section, option, fallback="").strip()
-        if current in known_insecure:
+        if current not in known_insecure:
+            return
+        previous = stored.get(section, option, fallback="").strip()
+        if previous not in known_insecure:
+            # Keep the key this installation has been using.
+            parser.set(section, option, previous)
+        elif inherits_secret_key and secret_key_from_env:
+            # Leave it empty: the application falls back to main.secret_key,
+            # so every pod uses the same key instead of generating its own.
+            parser.set(section, option, "")
+        else:
             parser.set(section, option, secrets.token_urlsafe(48))
 
-    ensure_secret("main", "secret_key")
+    ensure_secret("main", "secret_key", inherits_secret_key=False)
     ensure_secret("main", "secret_encryption_key")
     ensure_secret("auth", "jwt_secret")
     ensure_secret("mattermost", "action_secret")
     ensure_secret("voice", "callback_secret")
+
+    def env_value(section, option):
+        # The value the application reads from the environment, or None. It
+        # fails the same way the application does.
+        env_name = f"INCIDENTRELAY__{section}__{option}".upper()
+        file_name = env_name + "__FILE"
+        if env_name in os.environ and file_name in os.environ:
+            sys.exit(f"ERROR: both {env_name} and {file_name} are set; use only one of them")
+        if file_name in os.environ:
+            path = os.environ[file_name]
+            try:
+                with open(path, encoding="utf-8") as handle:
+                    return handle.read().rstrip("\r\n")
+            except OSError as exc:
+                sys.exit(f"ERROR: cannot read {file_name}={path}: {exc}")
+        return os.environ.get(env_name)
+
+    def setting(section, option):
+        # Like the application, an environment override wins over the config.
+        value = env_value(section, option)
+        if value is None:
+            value = parser.get(section, option, fallback="").strip()
+        return value
+
+    def key_check(key):
+        # A salted hash, so a key from the environment is never written here.
+        salt = secrets.token_bytes(16)
+        digest = hashlib.pbkdf2_hmac("sha256", key.encode("utf-8"), salt, KEY_CHECK_ITERATIONS)
+        return f"pbkdf2_sha256:{KEY_CHECK_ITERATIONS}:{salt.hex()}:{digest.hex()}"
+
+    def key_matches(key, check):
+        _, iterations, salt, digest = check.split(":")
+        expected = hashlib.pbkdf2_hmac(
+            "sha256", key.encode("utf-8"), bytes.fromhex(salt), int(iterations)
+        )
+        return hmac.compare_digest(expected.hex(), digest)
+
+    def is_key_check(check):
+        parts = check.split(":")
+        return len(parts) == 4 and parts[0] == "pbkdf2_sha256"
+
+    # Secrets in the database are encrypted with the effective key: as in the
+    # application, an empty main.secret_encryption_key falls back to
+    # main.secret_key. It must stay the same across restarts wherever it
+    # comes from.
+    explicit_key = setting("main", "secret_encryption_key")
+    effective_key = explicit_key or setting("main", "secret_key")
+    stored_check = stored.get("entrypoint", "secret_encryption_key_check", fallback="")
+    if not is_key_check(stored_check):
+        # Copies written by earlier versions hold only the keys themselves.
+        stored_key = (
+            stored.get("main", "secret_encryption_key", fallback="").strip()
+            or stored.get("main", "secret_key", fallback="").strip()
+        )
+        stored_check = key_check(stored_key) if stored_key not in known_insecure else ""
+    if effective_key:
+        if stored_check and not key_matches(effective_key, stored_check):
+            changed = (
+                "main.secret_encryption_key"
+                if explicit_key
+                else "main.secret_key, which is the encryption key while "
+                "main.secret_encryption_key is empty,"
+            )
+            sys.exit(
+                f"ERROR: {changed} differs from the key this installation has been using. "
+                "Secrets stored in the database are encrypted with it and would become "
+                "unreadable, and changing the key directly is not supported. "
+                "Restore the previous key."
+            )
+        stored_check = stored_check or key_check(effective_key)
+    if stored_check:
+        if not parser.has_section("entrypoint"):
+            parser.add_section("entrypoint")
+        parser.set("entrypoint", "secret_encryption_key_check", stored_check)
 
     fd, temp_path = tempfile.mkstemp(
         prefix="incidentrelay-conf-",
@@ -78,6 +202,26 @@ fi
 
 echo "Using config: $CONFIG_FILE"
 echo "Starting IncidentRelay service: $SERVICE"
+
+# prometheus_client keys its counter files by PID, so a directory may
+# only be shared by processes that see the same PIDs. One directory per
+# container: /metrics aggregates the web container only.
+export PROMETHEUS_MULTIPROC_DIR="${PROMETHEUS_MULTIPROC_DIR:-/var/lib/incidentrelay/metrics/$SERVICE}"
+
+# Docker/Compose starts the entrypoint as root to reconcile existing root-owned
+# volumes. The runtime config is created above with mode 0600; repair ownership
+# only AFTER config generation, and run all migrations and services as UID 10001.
+# Under Kubernetes runAsUser (or docker --user), skip ownership changes.
+if [ "$(id -u)" -eq 0 ]; then
+  python /opt/incidentrelay/docker/fix_volume_permissions.py
+  export HOME=/home/incidentrelay
+  exec setpriv --reuid=10001 --regid=10001 --clear-groups -- /entrypoint.sh
+fi
+
+# Create the metrics directory only after the process is unprivileged. This
+# also prevents a symlink in an existing writable volume from redirecting a
+# root mkdir outside the two trusted runtime paths.
+mkdir -p "$PROMETHEUS_MULTIPROC_DIR"
 
 if [ "${INCIDENTRELAY_RUN_MIGRATIONS:-0}" = "1" ]; then
   echo "Running database migrations..."

@@ -1,8 +1,17 @@
 import logging
 
 from app import Config
+from app.db import database_proxy as db
 from app.modules.common import utc_now
 from app.modules.db import alerts_repo, incidents_repo
+from app.services.alerts.reopen import (
+    lock_grouping_identity,
+    find_exact_open_group,
+    find_resolved_reopen_candidate,
+    group_matches_identity,
+    restart_resolved_group,
+    record_reopened_occurrence,
+)
 from app.services.alerts.escalation import apply_initial_escalation_policy_assignment
 from app.services.alerts.event_history import should_record_incoming_alert_event
 from app.services.alerts.explain import (
@@ -17,7 +26,11 @@ from app.services.alerts.maintenance_state import (
     record_maintenance_match,
     should_apply_window_to_group,
 )
-from app.services.alerts.notification_queue import schedule_group_notification
+from app.services.alerts.notification_queue import (
+    schedule_group_notification,
+    schedule_recovery_notification,
+    recovery_notification_delay_seconds,
+)
 from app.services.alerts.shelving import clear_shelve_on_resolve
 from app.services.alerts.priority import (
     apply_priority_resolution_to_group,
@@ -28,6 +41,7 @@ from app.services.alerts.priority import (
 )
 from app.services.incidents.priority_policies.resolver import resolve_incident_priority
 from app.services.alerts.result import AlertProcessingResult
+from app.services.metrics import record_alert_group_action
 from app.services.orchestration.runtime import (
     attach_runtime_executions,
     run_event_orchestration,
@@ -576,23 +590,36 @@ def _handle_existing_alert(
         )
     elif status == "resolved":
         if group.status == "resolved":
-            alerts_repo.clear_alert_group_notification(group)
-
-            if old_group_status != "resolved":
-                notify_stakeholders(
-                    group,
-                    "resolved",
-                    old_value=old_group_status,
-                )
-
-            if group.last_notification_at:
-                sent_count = notify_alert(
-                    group,
-                    event_type="resolved",
-                )
-                trace.resolved_notification_sent(sent_count=sent_count)
-            else:
+            recovery_delay = recovery_notification_delay_seconds()
+            if recovery_delay and old_group_status == "resolved":
+                # Duplicate upstream resolved payload: leave an already queued
+                # recovery notification untouched, never push its due time out.
                 trace.notification_not_needed(group)
+            elif recovery_delay and old_group_status != "resolved":
+                # Atomically replace firing work with pending recovery. Never
+                # clear a recovery already queued by a concurrent resolved.
+                if schedule_recovery_notification(group, now=now):
+                    trace.step(
+                        "notification", "recovery_notification_scheduled", "success",
+                        "Recovery notification deferred",
+                        "Technical recovery is immediate; outbound resolution waits for the configured grace period.",
+                        delay_seconds=recovery_delay,
+                    )
+                else:
+                    trace.notification_not_needed(group)
+            else:
+                alerts_repo.clear_alert_group_notification(group)
+                if old_group_status != "resolved":
+                    notify_stakeholders(
+                        group,
+                        "resolved",
+                        old_value=old_group_status,
+                    )
+                if group.last_notification_at:
+                    sent_count = notify_alert(group, event_type="resolved")
+                    trace.resolved_notification_sent(sent_count=sent_count)
+                else:
+                    trace.notification_not_needed(group)
         elif group.status == "firing":
             schedule_group_notification(
                 group,
@@ -822,6 +849,9 @@ def _upsert_alert(alert_data, trace, runtime=None):
         alert_data["dedup_key"],
         grouping_window_seconds,
     )
+    reopen_window_seconds = (
+        runtime.grouping_reopen_window_seconds if runtime is not None else 0
+    )
 
     existing_group = alerts_repo.find_open_alert_group(
         source=alert_data["source"],
@@ -830,6 +860,17 @@ def _upsert_alert(alert_data, trace, runtime=None):
         route_id=route.id if route else None,
         service_id=service.id if service else None,
     )
+
+    # An open child from another route/service/group must not bypass the
+    # strict identity rules when the 2.4 reopen policy is active.
+    if reopen_window_seconds and existing_alert is not None and not group_matches_identity(
+        existing_alert.group,
+        source=alert_data["source"], group_key=group_key,
+        team_id=team.id if team else None,
+        route_id=route.id if route else None,
+        service_id=service.id if service else None,
+    ):
+        existing_alert = None
 
     trace.dedup_completed(
         existing_alert=existing_alert,
@@ -849,6 +890,26 @@ def _upsert_alert(alert_data, trace, runtime=None):
 
     if maintenance_incident_status:
         status = maintenance_incident_status
+
+    reopen_enabled = bool(
+        reopen_window_seconds
+        and (alert_data.get("status") or "firing") == "firing"
+        and status in {"firing", "silenced"}
+    )
+    # Record the effective policy for both enabled and disabled rules. It is
+    # independent of the deduplication window and does not change lifecycle.
+    trace.step(
+        "grouping", "reopen_policy", "success",
+        "Resolved-group reuse policy",
+        (
+            "Reopen is disabled for this event."
+            if not reopen_window_seconds
+            else "Only eligible firing occurrences may reuse matching resolved groups."
+        ),
+        reopen_window_seconds=reopen_window_seconds,
+        enabled=bool(reopen_window_seconds),
+        eligible=reopen_enabled,
+    )
 
     if maintenance_decision.suppress_incident and not existing_alert and not existing_group:
         trace.incident_suppressed(maintenance_decision)
@@ -947,232 +1008,353 @@ def _upsert_alert(alert_data, trace, runtime=None):
 
     group = existing_group
     created_group = False
+    reopened_group = False
+    should_add_service_stakeholders = False
 
-    if not group:
-        group = _create_group(
-            alert_data=alert_data,
-            route=route,
-            team=team,
-            service=service,
-            rotation=rotation,
-            policy=policy,
-            policy_rule=policy_rule,
-            notification_policy=(runtime.notification_policy if runtime else None),
-            assignee=assignee,
-            next_escalation_at=next_escalation_at,
-            group_key=group_key,
-            status=status,
-            first_seen_at=now,
-            last_seen_at=now,
-            silenced=bool(silence),
-            priority_kwargs=priority_kwargs,
-            maintenance_kwargs=maintenance_kwargs,
-            orchestration_suppressed=orchestration_suppressed,
-            orchestration_suppress_reason=orchestration_suppress_reason,
+    # The group mutation and child Alert insert are one persistence unit. In
+    # particular, do not leave an empty AlertGroup behind if PostgreSQL rejects
+    # one of the externally controlled Alert fields.
+    try:
+        # SQLite needs a writer reservation before SELECTs in the reopen path.
+        # PostgreSQL uses a transaction-scoped advisory lock by grouping identity.
+        transaction = (
+            db.atomic(lock_type="IMMEDIATE")
+            if reopen_enabled and db.obj.__class__.__name__ == "SqliteDatabase"
+            else db.atomic()
         )
+        with transaction:
+            if reopen_enabled:
+                lock_grouping_identity(
+                    source=alert_data["source"], group_key=group_key,
+                    team_id=team.id if team else None,
+                    route_id=route.id if route else None,
+                    service_id=service.id if service else None,
+                )
+                # Re-read under the identity lock, not from the earlier snapshot.
+                # This is necessary for concurrent firing deliveries.
+                raced = alerts_repo.find_existing_alert(
+                    alert_data["source"], alert_data["dedup_key"],
+                    grouping_window_seconds, route_id=route.id,
+                )
+                if raced and raced.group_id and group_matches_identity(
+                    raced.group,
+                    source=alert_data["source"], group_key=group_key,
+                    team_id=team.id if team else None,
+                    route_id=route.id if route else None,
+                    service_id=service.id if service else None,
+                ):
+                    trace.step(
+                        "deduplication", "concurrent_occurrence_reused", "success",
+                        "Concurrent alert occurrence reused",
+                        "Another intake created this child Alert while this request waited for the grouping lock.",
+                        alert_id=raced.id, group_id=raced.group_id,
+                    )
+                    trace.processed(
+                        group=raced.group, alert=raced, created_group=False,
+                        outcome="updated",
+                    )
+                    return _completed_result(
+                        trace=trace, group=raced.group, alert=raced,
+                        created_group=False, outcome="updated",
+                    )
+                group = find_exact_open_group(
+                    source=alert_data["source"], group_key=group_key,
+                    team_id=team.id if team else None,
+                    route_id=route.id if route else None,
+                    service_id=service.id if service else None,
+                )
+                if group is None:
+                    candidate = find_resolved_reopen_candidate(
+                        source=alert_data["source"], group_key=group_key,
+                        team_id=team.id if team else None,
+                        route_id=route.id if route else None,
+                        service_id=service.id if service else None,
+                        now=now, reopen_window_seconds=reopen_window_seconds,
+                    )
+                    if candidate is None:
+                        trace.step(
+                            "grouping", "reopen_candidate_not_found", "success",
+                            "No eligible resolved AlertGroup",
+                            "No matching resolved AlertGroup was found inside the effective reopen window.",
+                            reopen_window_seconds=reopen_window_seconds,
+                        )
+                    else:
+                        group = restart_resolved_group(
+                            candidate, now=now, policy=policy,
+                            policy_rule=policy_rule, rotation=rotation,
+                            assignee=assignee,
+                            next_escalation_at=next_escalation_at,
+                        )
+                        reopened_group = True
+                        trace.group_reopened(group)
+            if not group:
+                group = _create_group(
+                    alert_data=alert_data,
+                    route=route,
+                    team=team,
+                    service=service,
+                    rotation=rotation,
+                    policy=policy,
+                    policy_rule=policy_rule,
+                    notification_policy=(
+                        runtime.notification_policy if runtime else None
+                    ),
+                    assignee=assignee,
+                    next_escalation_at=next_escalation_at,
+                    group_key=group_key,
+                    status=status,
+                    first_seen_at=now,
+                    last_seen_at=now,
+                    silenced=bool(silence),
+                    priority_kwargs=priority_kwargs,
+                    maintenance_kwargs=maintenance_kwargs,
+                    orchestration_suppressed=orchestration_suppressed,
+                    orchestration_suppress_reason=orchestration_suppress_reason,
+                )
 
-        created_group = True
-        trace.group_created(group)
+                created_group = True
+                should_add_service_stakeholders = True
+                trace.group_created(group)
 
-        _add_service_stakeholders_for_new_group(group)
+                alerts_repo.create_alert_event(
+                    group_id=group.id,
+                    event_type="created",
+                    message="Incident created",
+                )
 
-        alerts_repo.create_alert_event(
-            group_id=group.id,
-            event_type="created",
-            message="Incident created",
-        )
+                record_maintenance_match(
+                    group,
+                    maintenance_decision,
+                )
+            elif group.status == "acknowledged" and status == "firing":
+                preserve_ack = _should_preserve_acknowledgement(
+                    group,
+                    alert_data,
+                    route,
+                    priority_resolution,
+                    group_key_overridden=bool(runtime and runtime.group_key),
+                )
 
-        record_maintenance_match(
-            group,
-            maintenance_decision,
-        )
-    elif group.status == "acknowledged" and status == "firing":
-        preserve_ack = _should_preserve_acknowledgement(
-            group,
-            alert_data,
-            route,
-            priority_resolution,
-            group_key_overridden=bool(runtime and runtime.group_key),
-        )
+                if preserve_ack:
+                    trace.step(
+                        "grouping",
+                        "acknowledgement_preserved",
+                        "success",
+                        "Acknowledgement preserved",
+                        (
+                            "Correlated child matched the acknowledged incident_key "
+                            "without increasing effective incident priority."
+                        ),
+                        incident_key=_group_incident_key(group),
+                        priority_slug=getattr(group, "priority_slug", None),
+                    )
+                    trace.group_reused(group)
+                else:
+                    priority_increased = _incoming_priority_raises_incident(
+                        group,
+                        priority_resolution,
+                    )
 
-        if preserve_ack:
-            trace.step(
-                "grouping",
-                "acknowledgement_preserved",
-                "success",
-                "Acknowledgement preserved",
-                (
-                    "Correlated child matched the acknowledged incident_key "
-                    "without increasing effective incident priority."
-                ),
-                incident_key=_group_incident_key(group),
-                priority_slug=getattr(group, "priority_slug", None),
+                    group.previous_status = group.status
+                    group.status = "firing"
+                    group.acknowledged_by = None
+                    group.acknowledged_at = None
+
+                    if priority_increased:
+                        # A material deterioration starts a fresh escalation cycle.
+                        # Reusing a pre-ACK due time could immediately jump to a later
+                        # escalation step after the incident is reopened.
+                        group.escalation_policy = policy
+                        group.escalation_rule = policy_rule
+                        group.rotation = rotation
+                        group.assignee = assignee
+                        group.next_escalation_at = next_escalation_at
+                        group.last_escalated_at = None
+                        group.escalation_level = 0
+                        group.escalation_repeat_count = 0
+                        group.reminder_count = 0
+
+                    group.updated_at = now
+                    group.save()
+
+                    trace.group_reopened(group)
+
+                    alerts_repo.create_alert_event(
+                        group_id=group.id,
+                        event_type="reopened",
+                        message="New alert requires reopening acknowledged incident",
+                    )
+
+                    record_alert_group_action("reopened")
+            else:
+                trace.group_reused(group)
+
+            group.orchestration_suppressed = orchestration_suppressed
+            group.orchestration_suppress_reason = orchestration_suppress_reason
+            group_fields = [
+                group.__class__.orchestration_suppressed,
+                group.__class__.orchestration_suppress_reason,
+            ]
+            if orchestration_suppressed:
+                group.next_escalation_at = None
+                group_fields.append(group.__class__.next_escalation_at)
+            if runtime is not None and runtime.notification_policy is not None:
+                group.notification_policy = runtime.notification_policy.id
+                group_fields.append(group.__class__.notification_policy)
+            group.save(only=group_fields)
+
+            priority_state_before_recalculate = group_priority_state(group)
+
+            previous_priority_slug = (
+                None
+                if created_group
+                else priority_state_before_recalculate["priority_slug"]
             )
-            trace.group_reused(group)
-        else:
-            priority_increased = _incoming_priority_raises_incident(
+            previous_priority_order = (
+                None
+                if created_group
+                else priority_state_before_recalculate["priority_order"]
+            )
+
+            maybe_apply_maintenance_to_group(group, maintenance_decision)
+
+            alert = alerts_repo.create_alert(
+                group=group.id,
+                team=team.id if team else None,
+                route=route.id if route else None,
+                service=service.id if service else None,
+                rotation=rotation.id if rotation else None,
+                escalation_policy=policy.id if policy else None,
+                escalation_rule=policy_rule.id if policy_rule else None,
+                notification_policy=(
+                    runtime.notification_policy.id
+                    if runtime and runtime.notification_policy
+                    else getattr(group, "notification_policy_id", None)
+                ),
+                next_escalation_at=next_escalation_at,
+                assignee=assignee.id if assignee else None,
+                source=alert_data["source"],
+                external_id=alert_data.get("external_id"),
+                dedup_key=alert_data["dedup_key"],
+                group_key=group_key,
+                title=alert_data["title"],
+                message=alert_data.get("message"),
+                severity=alert_data.get("severity"),
+                labels=alert_data.get("labels"),
+                payload=alert_data.get("payload"),
+                status=status,
+                first_seen_at=now,
+                last_seen_at=now,
+                silenced=bool(silence),
+                orchestration_suppressed=orchestration_suppressed,
+                orchestration_suppress_reason=orchestration_suppress_reason,
+                **priority_kwargs,
+                **maintenance_kwargs,
+            )
+
+            trace.alert_created(alert, group)
+
+            if silences:
+                record_new_alert_silences(alert, silences, now=now)
+
+            if should_record_incoming_alert_event("created", runtime=runtime):
+                alerts_repo.create_alert_event(
+                    alert_id=alert.id,
+                    group_id=group.id,
+                    event_type="created",
+                    message="Alert created",
+                )
+
+            if maintenance_decision.matched:
+                record_maintenance_match(
+                    group,
+                    maintenance_decision,
+                    alert_id=alert.id,
+                )
+
+            reconcile_alert_group_maintenance(
+                group,
+                now=now,
+                trigger_source="intake",
+            )
+
+            if alert_data.get("routing_error"):
+                alerts_repo.create_alert_event(
+                    alert_id=alert.id,
+                    group_id=group.id,
+                    event_type="routing_error",
+                    message=alert_data["routing_error"],
+                )
+
+                trace.routing_warning_recorded(alert_data["routing_error"])
+
+            for matched_silence in silences:
+                alerts_repo.create_alert_event(
+                    alert_id=alert.id,
+                    group_id=group.id,
+                    event_type="silenced",
+                    message=f"Matched silence: {matched_silence.name}",
+                )
+
+            group = alerts_repo.recalculate_alert_group(group)
+            group = restore_group_priority_state(
+                group,
+                priority_state_before_recalculate,
+            )
+
+            if not created_group:
+                group = apply_priority_resolution_to_group(
+                    group,
+                    priority_resolution,
+                )
+
+            if reopened_group:
+                # The new child is visible to recalculate and the audit record
+                # reflects the final technical status, including maintenance.
+                record_reopened_occurrence(group, alert)
+
+            trace.priority_applied(
                 group,
                 priority_resolution,
+                previous_priority_slug=(
+                    None if created_group else previous_priority_slug
+                ),
+                previous_priority_order=(
+                    None if created_group else previous_priority_order
+                ),
+                created_group=created_group,
             )
-
-            group.previous_status = group.status
-            group.status = "firing"
-            group.acknowledged_by = None
-            group.acknowledged_at = None
-
-            if priority_increased:
-                # A material deterioration starts a fresh escalation cycle.
-                # Reusing a pre-ACK due time could immediately jump to a later
-                # escalation step after the incident is reopened.
-                group.escalation_policy = policy
-                group.escalation_rule = policy_rule
-                group.rotation = rotation
-                group.assignee = assignee
-                group.next_escalation_at = next_escalation_at
-                group.last_escalated_at = None
-                group.escalation_level = 0
-                group.escalation_repeat_count = 0
-                group.reminder_count = 0
-
-            group.updated_at = now
-            group.save()
-
-            trace.group_reopened(group)
-
-            alerts_repo.create_alert_event(
-                group_id=group.id,
-                event_type="reopened",
-                message="New alert requires reopening acknowledged incident",
-            )
-    else:
-        trace.group_reused(group)
-
-    group.orchestration_suppressed = orchestration_suppressed
-    group.orchestration_suppress_reason = orchestration_suppress_reason
-    group_fields = [
-        group.__class__.orchestration_suppressed,
-        group.__class__.orchestration_suppress_reason,
-    ]
-    if orchestration_suppressed:
-        group.next_escalation_at = None
-        group_fields.append(group.__class__.next_escalation_at)
-    if runtime is not None and runtime.notification_policy is not None:
-        group.notification_policy = runtime.notification_policy.id
-        group_fields.append(group.__class__.notification_policy)
-    group.save(only=group_fields)
-
-    priority_state_before_recalculate = group_priority_state(group)
-
-    previous_priority_slug = (
-        None
-        if created_group
-        else priority_state_before_recalculate["priority_slug"]
-    )
-    previous_priority_order = (
-        None
-        if created_group
-        else priority_state_before_recalculate["priority_order"]
-    )
-
-    maybe_apply_maintenance_to_group(group, maintenance_decision)
-
-    alert = alerts_repo.create_alert(
-        group=group.id,
-        team=team.id if team else None,
-        route=route.id if route else None,
-        service=service.id if service else None,
-        rotation=rotation.id if rotation else None,
-        escalation_policy=policy.id if policy else None,
-        escalation_rule=policy_rule.id if policy_rule else None,
-        notification_policy=(
-            runtime.notification_policy.id
-            if runtime and runtime.notification_policy
-            else getattr(group, "notification_policy_id", None)
-        ),
-        next_escalation_at=next_escalation_at,
-        assignee=assignee.id if assignee else None,
-        source=alert_data["source"],
-        external_id=alert_data.get("external_id"),
-        dedup_key=alert_data["dedup_key"],
-        group_key=group_key,
-        title=alert_data["title"],
-        message=alert_data.get("message"),
-        severity=alert_data.get("severity"),
-        labels=alert_data.get("labels"),
-        payload=alert_data.get("payload"),
-        status=status,
-        first_seen_at=now,
-        last_seen_at=now,
-        silenced=bool(silence),
-        orchestration_suppressed=orchestration_suppressed,
-        orchestration_suppress_reason=orchestration_suppress_reason,
-        **priority_kwargs,
-        **maintenance_kwargs,
-    )
-
-    trace.alert_created(alert, group)
-
-    if silences:
-        record_new_alert_silences(alert, silences, now=now)
-
-    if should_record_incoming_alert_event("created", runtime=runtime):
-        alerts_repo.create_alert_event(
-            alert_id=alert.id,
-            group_id=group.id,
-            event_type="created",
-            message="Alert created",
+    except Exception:
+        logger.exception(
+            "alert persistence failed",
+            extra={
+                "extra": {
+                    "source": alert_data.get("source"),
+                    "route_id": route.id if route else None,
+                    "team_id": team.id if team else None,
+                    "service_id": service.id if service else None,
+                    "title_length": len(str(alert_data.get("title") or "")),
+                    "external_id_length": len(
+                        str(alert_data.get("external_id") or "")
+                    ),
+                    "dedup_key_length": len(
+                        str(alert_data.get("dedup_key") or "")
+                    ),
+                    "group_key_length": len(str(group_key or "")),
+                    "trace_id": trace.trace_id,
+                }
+            },
         )
+        raise
 
-    if maintenance_decision.matched:
-        record_maintenance_match(
-            group,
-            maintenance_decision,
-            alert_id=alert.id,
-        )
+    if reopened_group:
+        # Metrics must only record a successful persistence transaction.
+        record_alert_group_action("reopened")
 
-    reconcile_alert_group_maintenance(
-        group,
-        now=now,
-        trigger_source="intake",
-    )
-
-    if alert_data.get("routing_error"):
-        alerts_repo.create_alert_event(
-            alert_id=alert.id,
-            group_id=group.id,
-            event_type="routing_error",
-            message=alert_data["routing_error"],
-        )
-
-        trace.routing_warning_recorded(alert_data["routing_error"])
-
-    for matched_silence in silences:
-        alerts_repo.create_alert_event(
-            alert_id=alert.id,
-            group_id=group.id,
-            event_type="silenced",
-            message=f"Matched silence: {matched_silence.name}",
-        )
-
-    group = alerts_repo.recalculate_alert_group(group)
-    group = restore_group_priority_state(
-        group,
-        priority_state_before_recalculate,
-    )
-
-    if not created_group:
-        group = apply_priority_resolution_to_group(
-            group,
-            priority_resolution,
-        )
-
-    trace.priority_applied(
-        group,
-        priority_resolution,
-        previous_priority_slug=None if created_group else previous_priority_slug,
-        previous_priority_order=None if created_group else previous_priority_order,
-        created_group=created_group,
-    )
+    # Stakeholder copy/notification may have external side effects. Run it
+    # only after the AlertGroup + child Alert transaction has committed.
+    if should_add_service_stakeholders:
+        _add_service_stakeholders_for_new_group(group)
 
     refresh_alert_group_correlations_safely(group, reason="new_alert")
 
@@ -1279,7 +1461,7 @@ def _upsert_alert(alert_data, trace, runtime=None):
     else:
         trace.notification_not_needed(group)
 
-    outcome = "created" if created_group else "added"
+    outcome = "created" if created_group else ("reopened" if reopened_group else "added")
 
     trace.processed(
         group=group,

@@ -77,6 +77,7 @@ def resolve_alert(
     user_id: int | None = None,
     *,
     update_messages: bool = True,
+    defer_stakeholder_notification: bool = False,
 ) -> AlertGroup:
     """Resolve an alert group."""
     group_before = alerts_repo.get_alert_group(alert_id)
@@ -88,6 +89,8 @@ def resolve_alert(
         return group_before
 
     group = alerts_repo.resolve_alert_group(alert_id, user_id=user_id)
+    # A manual resolve must not leave a stale firing group_wait job behind.
+    alerts_repo.clear_alert_group_notification(group)
     clear_shelve_on_resolve(group.id, user_id=user_id)
 
     alerts_repo.create_alert_event(
@@ -110,7 +113,7 @@ def resolve_alert(
     if update_messages:
         update_alert_messages(group, event_type="resolved")
 
-    if old_status != group.status:
+    if old_status != group.status and not defer_stakeholder_notification:
         notify_stakeholders(
             group,
             "resolved",

@@ -1,4 +1,4 @@
-from app.modules.db import incidents_repo, maintenance_repo, business_services_repo
+from app.modules.db import incidents_repo, maintenance_repo, business_services_repo, notification_policies_repo
 from app.services.incidents.responder_display import responder_target_label
 from app.services.serializers.business_services import serialize_business_service_incident_impact, \
     serialize_alert_group_business_impact_summary
@@ -40,10 +40,45 @@ def serialize_alert_event(event):
 
     return {
         "id": event.id,
+        "alert_id": event.alert_id,
+        "group_id": event.group_id,
         "event_type": event.event_type,
         "message": event.message,
+        "user_id": event.user_id,
         "user": serialize_user_short(event.user),
         "created_at": serialize_utc_datetime(event.created_at),
+    }
+
+
+def serialize_alert_activity_event(event, group, user=None):
+    """Serialize one compact cross-group activity feed item."""
+
+    team = group.team if getattr(group, "team_id", None) else None
+
+    actor = None
+    if user:
+        actor = {
+            "id": user.id,
+            "username": user.username,
+            "display_name": user.display_name,
+        }
+
+    return {
+        "id": event.id,
+        "event_type": event.event_type,
+        "message": event.message,
+        "created_at": serialize_utc_datetime(event.created_at),
+        "user": actor,
+        "alert_group": {
+            "id": group.id,
+            "title": group.title,
+            "status": group.status,
+            "severity": group.severity,
+            "priority": getattr(group, "priority_slug", None),
+            "team_id": getattr(team, "id", None),
+            "team_name": getattr(team, "name", None),
+            "team_slug": getattr(team, "slug", None),
+        },
     }
 
 
@@ -393,10 +428,10 @@ def serialize_incident_responder_target(responder):
 
 
 def serialize_incident_responder(responder):
-    """Serialize incident responder request."""
+    """Serialize legacy AlertGroup responder request."""
     return {
         "id": responder.id,
-        "incident_id": responder.group_id,
+        "alert_group_id": responder.group_id,
         "group_id": responder.group_id,
 
         "target_type": responder.target_type,
@@ -492,6 +527,59 @@ def serialize_priority_ref(obj):
     }
 
 
+def _current_alert_group_policy_context(group, route, service):
+    """Display selected escalation and today's configuration without replaying the event.
+
+    A historical priority-policy source isn't persisted on AlertGroup, and
+    notification channels depend on event type. Never describe these as an
+    authoritative record of how a past event was handled; Explain Trace owns
+    the historical decision.
+    """
+    from app.services.incidents.priority_policies.service import get_effective_policy
+    from app.services.notifications.policies.resolver import resolve_notification_channels
+
+    priority_policy = get_effective_policy(team_id=group.team_id, service=service) if group.team_id else None
+    priority_source = (
+        "service_override"
+        if priority_policy and service and service.priority_policy_id == priority_policy.id
+        else "team_default" if priority_policy else "severity_fallback"
+    )
+    channels = resolve_notification_channels(group, event_type="notification")
+    notification_policy = (
+        notification_policies_repo.get_notification_policy_or_none(channels.policy_id)
+        if channels.policy_id else None
+    )
+    if notification_policy and notification_policy.team_id != group.team_id:
+        notification_policy = None
+    if group.notification_policy_id:
+        notification_source = "orchestration_override"
+    elif channels.policy_id:
+        notification_source = "service_policy"
+    else:
+        notification_source = "route_channels"
+
+    return {
+        "escalation": {
+            "id": group.escalation_policy_id,
+            "name": group.escalation_policy.name if group.escalation_policy_id else None,
+            "source": "selected_on_alert_group",
+        },
+        "priority": {
+            "id": priority_policy.id if priority_policy else None,
+            "name": priority_policy.name if priority_policy else None,
+            "source": priority_source,
+            "scope": "current_configuration",
+        },
+        "notification": {
+            "id": channels.policy_id,
+            "name": notification_policy.name if notification_policy else None,
+            "source": notification_source,
+            "mode": channels.mode,
+            "scope": "current_notification_event",
+        },
+    }
+
+
 def serialize_alert_group(
     group,
     include_payload=False,
@@ -502,7 +590,7 @@ def serialize_alert_group(
     responders=None,
     current_user=None,
 ):
-    """Serialize an alert group as the primary incident object."""
+    """Serialize a technical AlertGroup."""
 
     team = group.team if getattr(group, "team_id", None) else None
     route = group.route if getattr(group, "route_id", None) else None
@@ -570,6 +658,13 @@ def serialize_alert_group(
         "first_seen_at": serialize_utc_datetime(group.first_seen_at),
         "last_seen_at": serialize_utc_datetime(group.last_seen_at),
         "last_notification_at": serialize_utc_datetime(group.last_notification_at),
+        "recovery_notification_due_at": (
+            serialize_utc_datetime(group.notification_due_at)
+            if group.status == "resolved"
+            and group.notification_pending
+            and group.notification_reason == "recovery"
+            else None
+        ),
 
         "reminder_count": group.reminder_count,
 
@@ -606,6 +701,7 @@ def serialize_alert_group(
         data["payload_summary"] = group.payload_summary
 
     if include_details:
+        data["policy_context"] = _current_alert_group_policy_context(group, route, service)
         data["alerts"] = [
             serialize_alert(alert, current_user=current_user)
             for alert in alerts or []

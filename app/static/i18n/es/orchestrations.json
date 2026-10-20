@@ -88,6 +88,15 @@
   "orchestrations.executions.matches": "Reglas coincidentes",
   "orchestrations.executions.duration": "Duración",
   "orchestrations.executions.created": "Creado",
+  "orchestrations.executions.notes": "Notas",
+  "orchestrations.executions.trace_views": "Vistas de la traza",
+  "orchestrations.executions.candidate_event": "Evento evaluado (candidato)",
+  "orchestrations.executions.candidate_targets": "Destinos propuestos",
+  "orchestrations.executions.mode": "Modo",
+  "orchestrations.executions.application": "Aplicación al evento",
+  "orchestrations.executions.applied": "Aplicado",
+  "orchestrations.executions.not_applied": "No aplicado",
+  "orchestrations.executions.candidate_actual": "Candidato → resultado real",
   "orchestrations.webhooks.title": "Acciones webhook",
   "orchestrations.webhooks.help": "Acciones salientes reutilizables y cifradas ejecutadas de forma asíncrona.",
   "orchestrations.webhooks.name": "Nombre",
@@ -224,5 +233,8 @@
   "orchestrations.simulator.active_draft_changes": "Activa → borrador",
   "orchestrations.edit.title": "Editar orquestación de eventos",
   "orchestrations.edit.help": "Actualiza metadatos, ámbito y configuración de runtime.",
-  "orchestrations.simulator.alert_event_history": "Historial de eventos de alerta"
+  "orchestrations.simulator.alert_event_history": "Historial de eventos de alerta",
+  "orchestrations.rule_editor.reopen_window_placeholder": "Ventana de reapertura (s; 0 desactiva)",
+  "orchestrations.rule_editor.reopen_window_label": "Ventana de reapertura (segundos)",
+  "orchestrations.rule_editor.reopen_window_help": "Reutiliza un grupo resuelto recientemente para una nueva alerta activa. Independiente de la ventana de agrupación; desactivado por defecto."
 }

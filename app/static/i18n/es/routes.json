@@ -216,5 +216,21 @@
   "routes.form.azure_monitor_help": "Azure Monitor Action Group Webhook requiere Common Alert Schema. Usa la URI de webhook generada, que incluye credenciales HTTP Basic para esta ruta.",
   "routes.intake.azure_monitor_example_comment": "Ejemplo de webhook Azure Monitor Common Alert Schema",
   "routes.intake.azure_monitor_subtitle": "Usa esta URI en un Webhook de Azure Monitor Action Group y habilita Common Alert Schema.",
-  "routes.intake.azure_monitor_help": "La URI generada se autentica mediante HTTP Basic con el usuario incidentrelay y el token de la ruta como contraseña. Bearer auth también funciona para clientes que pueden establecer headers personalizados."
+  "routes.intake.azure_monitor_help": "La URI generada se autentica mediante HTTP Basic con el usuario incidentrelay y el token de la ruta como contraseña. Bearer auth también funciona para clientes que pueden establecer headers personalizados.",
+  "routes.form.cloud_ru_help": "Cloud.ru Advanced Cloud Eye delivers alarms through Simple Message Notification (SMN). Configure the generated webhook URL as an HTTP/HTTPS subscription endpoint and use the exact Topic URN below.",
+  "routes.form.cloud_ru_topic_urn": "Cloud.ru SMN Topic URN",
+  "routes.form.cloud_ru_topic_urn_help": "Exact SMN topic URN allowed to send signed notifications to this route, for example urn:smn:region:project-id:incidentrelay.",
+  "routes.form.cloud_ru_webhook": "Cloud.ru SMN webhook URL",
+  "routes.form.cloud_ru_webhook_help": "Add this HTTPS URL as the SMN HTTP/HTTPS subscription endpoint. IncidentRelay validates SMN signatures and confirms the subscription automatically.",
+  "routes.intake.cloud_ru_example_comment": "Cloud.ru SMN / Cloud Eye endpoint (requests must carry a valid SMN signature)",
+  "routes.intake.cloud_ru_subtitle": "Use this route-scoped HTTPS URL as a Cloud.ru Advanced SMN HTTP/HTTPS subscription endpoint.",
+  "routes.intake.cloud_ru_help": "No IncidentRelay token is sent by SMN. IncidentRelay verifies the SMN V1 signature, Cloud.ru signing certificate and exact Topic URN before accepting Cloud Eye alarms.",
+  "routes.form.opensearch_help": "Configure un webhook personalizado de OpenSearch Alerting con monitor_id y trigger_id estables; añada bucket_key si procede.",
+  "routes.form.kibana_help": "Configure el conector Webhook de Kibana con rule_id y alert_id por alerta y una acción de recuperación separada.",
+  "routes.intake.opensearch_subtitle": "Use este endpoint en OpenSearch Custom Webhook con el token de ruta en Authorization: Bearer.",
+  "routes.intake.opensearch_help": "monitor_id + trigger_id (+ bucket_key) identifican el aviso. status define activo o recuperado.",
+  "routes.intake.opensearch_example_comment": "Ejemplo JSON de OpenSearch Alerting Custom Webhook",
+  "routes.intake.kibana_subtitle": "Use este endpoint en Kibana Webhook con el token de ruta en Authorization: Bearer.",
+  "routes.intake.kibana_help": "Use rule_id, alert_id y space_id para identificar la alerta; configure una acción de recuperación.",
+  "routes.intake.kibana_example_comment": "Ejemplo JSON de Kibana Alerting por alerta"
 }

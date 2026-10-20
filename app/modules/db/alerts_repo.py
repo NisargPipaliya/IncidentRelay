@@ -28,6 +28,7 @@ from app.modules.db.query_filters import (
     normalize_filter_values,
 )
 from app.modules.common import utc_now
+from app.services.metrics import record_alert_group_action
 
 
 MAX_ALERTS_PAGE_SIZE = 100
@@ -500,7 +501,11 @@ def create_alert_group(**kwargs):
 
     group_key = kwargs.get("group_key") or ""
     kwargs["group_key_hash"] = hash_group_key(group_key)
-    return AlertGroup.create(**kwargs)
+    group = AlertGroup.create(**kwargs)
+    # Single hook point for group creation, whatever path created the
+    # group: integration intake, manual creation, scheduler-side intakes.
+    record_alert_group_action("created")
+    return group
 
 
 def list_alerts_for_group(group_id):
@@ -654,6 +659,7 @@ def acknowledge_alert_group(group_id, user_id=None):
     group.acknowledged_by = user_id
     group.acknowledged_at = utc_now()
     group.save()
+    record_alert_group_action("acknowledged")
     return group
 
 
@@ -681,7 +687,7 @@ def resolve_alert_group(group_id, user_id=None):
     group.resolved_count = Alert.select().where(Alert.group == group.id).count()
     group.updated_at = now
     group.save()
-
+    record_alert_group_action("resolved")
     return group
 
 
@@ -730,6 +736,105 @@ def list_group_events(group_id):
     """Return group-level and child alert events in legacy chronological order."""
 
     return list(_group_events_query(group_id).order_by(AlertEvent.id.asc()))
+
+
+def list_recent_alert_group_activity(
+    *,
+    team_ids=None,
+    limit=6,
+    event_types=None,
+):
+    """Return recent AlertGroup activity with groups and actors resolved in batches.
+
+    Both group-level events and child-alert events are included. ``team_ids`` is
+    always applied before the limit so activity from inaccessible teams cannot
+    displace visible rows.
+    """
+
+    if team_ids is not None:
+        team_ids = sorted({int(team_id) for team_id in team_ids if team_id})
+        if not team_ids:
+            return []
+
+    group_ids = AlertGroup.select(AlertGroup.id)
+    if team_ids is not None:
+        group_ids = group_ids.where(AlertGroup.team.in_(team_ids))
+
+    child_alert_ids = (
+        Alert
+        .select(Alert.id)
+        .where(Alert.group.in_(group_ids))
+    )
+
+    query = AlertEvent.select().where(
+        (AlertEvent.group.in_(group_ids))
+        | (AlertEvent.alert.in_(child_alert_ids))
+    )
+
+    if event_types:
+        query = query.where(AlertEvent.event_type.in_(tuple(event_types)))
+
+    events = list(
+        query
+        .order_by(AlertEvent.created_at.desc(), AlertEvent.id.desc())
+        .limit(max(1, int(limit or 1)))
+    )
+    if not events:
+        return []
+
+    child_event_alert_ids = {event.alert_id for event in events if event.alert_id}
+    group_by_alert_id = {}
+    if child_event_alert_ids:
+        group_by_alert_id = {
+            alert.id: alert.group_id
+            for alert in (
+                Alert
+                .select(Alert.id, Alert.group)
+                .where(Alert.id.in_(child_event_alert_ids))
+            )
+        }
+
+    group_id_by_event_id = {}
+    group_ids_to_load = set()
+    for event in events:
+        group_id = event.group_id or group_by_alert_id.get(event.alert_id)
+        if not group_id:
+            continue
+        group_id_by_event_id[event.id] = group_id
+        group_ids_to_load.add(group_id)
+
+    groups = {}
+    if group_ids_to_load:
+        groups = {
+            group.id: group
+            for group in (
+                AlertGroup
+                .select(AlertGroup, Team)
+                .join(Team, JOIN.LEFT_OUTER)
+                .where(AlertGroup.id.in_(group_ids_to_load))
+            )
+        }
+
+    user_ids = {event.user_id for event in events if event.user_id}
+    users = {}
+    if user_ids:
+        users = {
+            user.id: user
+            for user in User.select().where(User.id.in_(user_ids))
+        }
+
+    result = []
+    for event in events:
+        group = groups.get(group_id_by_event_id.get(event.id))
+        if not group:
+            continue
+        result.append({
+            "event": event,
+            "group": group,
+            "user": users.get(event.user_id),
+        })
+
+    return result
 
 
 def paginate_group_events(group_id, page=1, page_size=50):

@@ -8,7 +8,7 @@ def _json_schema(operation):
 def test_openapi_alerts_are_documented_as_groups():
     spec = build_openapi_spec()
 
-    operation = spec["paths"]["/api/alerts"]["get"]
+    operation = spec["paths"]["/api/alert-groups"]["get"]
 
     assert operation["operationId"] == "listAlertGroups"
     assert operation["security"] == [{"bearerAuth": []}]
@@ -25,7 +25,7 @@ def test_openapi_alerts_are_documented_as_groups():
 def test_openapi_alert_group_detail_contains_child_alerts():
     spec = build_openapi_spec()
 
-    operation = spec["paths"]["/api/alerts/{alert_id}"]["get"]
+    operation = spec["paths"]["/api/alert-groups/{alert_id}"]["get"]
 
     assert operation["operationId"] == "getAlertGroup"
     assert operation["security"] == [{"bearerAuth": []}]
@@ -41,14 +41,16 @@ def test_openapi_alert_group_detail_contains_child_alerts():
 def test_openapi_alert_group_merge_endpoint():
     spec = build_openapi_spec()
 
-    operation = spec["paths"]["/api/alerts/merge"]["post"]
+    operation = spec["paths"][
+        "/api/alert-groups/{target_group_id}/merge"
+    ]["post"]
 
     assert operation["operationId"] == "mergeAlertGroups"
     assert operation["security"] == [{"bearerAuth": []}]
 
     request_schema = operation["requestBody"]["content"]["application/json"]["schema"]
 
-    assert request_schema["required"] == ["target_group_id", "source_group_ids"]
+    assert request_schema["required"] == ["source_group_ids"]
     assert request_schema["properties"]["source_group_ids"]["type"] == "array"
 
 
@@ -57,7 +59,7 @@ def test_openapi_alert_list_supports_multi_value_filters():
 
     parameters = {
         parameter["name"]: parameter
-        for parameter in spec["paths"]["/api/alerts"]["get"]["parameters"]
+        for parameter in spec["paths"]["/api/alert-groups"]["get"]["parameters"]
     }
 
     assert parameters["status"]["schema"]["type"] == "array"
@@ -91,7 +93,7 @@ def test_openapi_alert_comment_schema_keeps_validation_constraints():
 
 def test_openapi_alert_events_documents_optional_pagination():
     spec = build_openapi_spec()
-    operation = spec["paths"]["/api/alerts/{alert_id}/events"]["get"]
+    operation = spec["paths"]["/api/alert-groups/{alert_id}/events"]["get"]
     parameters = {item["name"]: item for item in operation["parameters"]}
 
     assert parameters["page"]["schema"]["minimum"] == 1
@@ -102,10 +104,55 @@ def test_openapi_alert_events_documents_optional_pagination():
 
 def test_openapi_alert_group_detail_exposes_event_pagination():
     spec = build_openapi_spec()
-    operation = spec["paths"]["/api/alerts/{alert_id}"]["get"]
+    operation = spec["paths"]["/api/alert-groups/{alert_id}"]["get"]
     schema = _json_schema(operation)
     parameters = {item["name"]: item for item in operation["parameters"]}
 
     assert "events_pagination" in schema["properties"]
     assert parameters["events_page"]["schema"]["minimum"] == 1
     assert parameters["events_page_size"]["schema"]["maximum"] == 100
+
+
+def test_openapi_documents_recent_alert_group_activity():
+    spec = build_openapi_spec()
+    operation = spec["paths"]["/api/alert-groups/activity"]["get"]
+
+    assert operation["operationId"] == "listAlertGroupActivity"
+    parameters = {item["name"]: item for item in operation["parameters"]}
+    assert parameters["limit"]["schema"]["maximum"] == 25
+    assert parameters["team_id"]["schema"]["minimum"] == 1
+
+    schema = _json_schema(operation)
+    item = schema["properties"]["items"]["items"]
+    assert "alert_group" in item["properties"]
+    assert "event_type" in item["properties"]
+
+
+def test_openapi_documents_alert_analytics():
+    spec = build_openapi_spec()
+    operation = spec["paths"]["/api/alert-groups/analytics"]["get"]
+
+    assert operation["operationId"] == "getAlertAnalytics"
+    assert operation["security"] == [{"bearerAuth": []}]
+
+    parameters = {item["name"]: item for item in operation["parameters"]}
+    assert parameters["team_id"]["schema"]["minimum"] == 1
+    assert parameters["days"]["schema"]["maximum"] == 365
+    assert parameters["limit"]["schema"]["maximum"] == 50
+
+    schema = _json_schema(operation)
+    assert schema["properties"]["version"]["enum"] == [1]
+    assert "top_noisy" in schema["properties"]
+    assert "oldest_unresolved" in schema["properties"]
+    assert "attention" in schema["properties"]
+    assert "lifecycle_by_day" in schema["properties"]["series"]["properties"]
+
+    attention = schema["properties"]["attention"]["properties"]
+    resolved_health = attention["resolved_without_ack_by_alert"]["items"]
+    resolved_health_properties = resolved_health["properties"]
+
+    assert "alertname" in resolved_health_properties
+    assert "resolved_groups" in resolved_health_properties
+    assert "resolved_without_ack" in resolved_health_properties
+    assert "rate" in resolved_health_properties
+    assert "median_lifetime_seconds" in resolved_health_properties

@@ -9,6 +9,12 @@
   "common.install_app": "Install app",
   "common.collapse_sidebar": "Collapse sidebar",
   "common.loading_oncall_status": "Loading on-call status...",
+  "common.loading": "Loading...",
+  "common.updating": "Updating...",
+  "nav.operations": "Operations",
+  "nav.on_call": "On-call",
+  "nav.configuration": "Configuration",
+  "nav.policies": "Policies",
   "nav.overview": "Overview",
   "nav.alerts": "Alerts",
   "nav.rotations": "Rotations",
@@ -85,5 +91,8 @@
   "pages.sso.title": "SSO",
   "pages.sso.subtitle": "OIDC and SAML login providers",
   "pages.login.title": "Login",
-  "pages.login.subtitle": "JWT authentication"
+  "pages.login.subtitle": "JWT authentication",
+  "nav.incidents": "Incidents",
+  "pages.incidents.title": "Incidents",
+  "pages.incidents.subtitle": "Operational incidents and independent response workflow"
 }

@@ -1,12 +1,19 @@
 let currentDetailsAlertId = null;
 let currentDetailsAlertCanRespond = false;
 let currentDetailsAlertShelved = false;
+let currentShelveAlertId = null;
+let currentShelveAlertIds = [];
+let currentShelveAlertCanRespond = false;
+let currentShelveBulkMode = false;
+let currentShelveSuccessCallback = null;
 const ALERT_EVENTS_PAGE_SIZE = 50;
 let currentDetailsActiveTab = "summary";
 let currentDetailsExplainLoadedAlertId = null;
 let currentDetailsExplainTraceId = null;
 let alertsCache = [];
 let alertsAutoRefreshTimer = null;
+let alertsHasLoaded = false;
+let alertsLoadGeneration = 0;
 let alertsLastAppliedQueryString = null;
 let alertsCurrentPage = 1;
 let alertsPageSize = 25;
@@ -74,6 +81,62 @@ const alertsSortColumns = {
         defaultDirection: "desc",
     },
 };
+function configureAlertShelveModal(isBulk, count) {
+    $("#alert-shelve-title").text(
+        isBulk
+            ? i18n.t("alerts.bulk.shelve_title")
+            : i18n.t("alert_details.shelve.title")
+    );
+    $("#alert-shelve-help").text(
+        isBulk
+            ? i18n.t("alerts.bulk.shelve_help", {count: count || 0})
+            : i18n.t("alert_details.shelve.help")
+    );
+    $("#confirm-alert-shelve").text(
+        isBulk
+            ? i18n.t("alerts.bulk.shelve_confirm")
+            : i18n.t("alert_details.actions.shelve")
+    );
+}
+
+function resetAlertShelveContext() {
+    currentShelveAlertId = null;
+    currentShelveAlertIds = [];
+    currentShelveAlertCanRespond = false;
+    currentShelveBulkMode = false;
+    currentShelveSuccessCallback = null;
+    configureAlertShelveModal(false, 0);
+}
+
+function openAlertShelveModal(alertId, options) {
+    const settings = $.extend({
+        canRespond: true,
+        onSuccess: null,
+    }, options || {});
+    const targetId = Number(alertId) || null;
+
+    if (!targetId || !settings.canRespond) {
+        return;
+    }
+
+    currentShelveAlertId = targetId;
+    currentShelveAlertIds = [targetId];
+    currentShelveAlertCanRespond = true;
+    currentShelveBulkMode = false;
+    currentShelveSuccessCallback = (
+        typeof settings.onSuccess === "function"
+            ? settings.onSuccess
+            : null
+    );
+
+    configureAlertShelveModal(false, 1);
+    $("#alert-shelve-duration").val("3600");
+    $("#alert-shelve-reason").val("");
+    openAppModal("#alert-shelve-modal");
+}
+
+window.openAlertShelveModal = openAlertShelveModal;
+
 function isAlertGroup(alert) {
     return alert && alert.type === "alert_group";
 }
@@ -128,6 +191,12 @@ function selectedAlertGroups() {
     });
 }
 
+function alertGroupIsShelved(alert) {
+    return Boolean(
+        alert
+        && (alert.shelved || (alert.shelve && alert.shelve.active))
+    );
+}
 
 function selectedAlertGroupsForBulkAction(action) {
     return selectedAlertGroups().filter(function (alert) {
@@ -137,12 +206,22 @@ function selectedAlertGroupsForBulkAction(action) {
             return false;
         }
 
+        const shelved = alertGroupIsShelved(alert);
+
         if (action === "ack") {
-            return status === "firing";
+            return status === "firing" && !shelved;
         }
 
-        if (action === i18n.t("alert_details.bulk.resolve_action")) {
+        if (action === "resolve") {
             return status !== "resolved" && status !== "merged";
+        }
+
+        if (action === "shelve") {
+            return status !== "resolved" && status !== "merged" && !shelved;
+        }
+
+        if (action === "unshelve") {
+            return status !== "resolved" && status !== "merged" && shelved;
         }
 
         return false;
@@ -228,6 +307,20 @@ function ensureAlertsBulkActionsBar() {
         .append(
             $("<button>")
                 .attr("type", "button")
+                .attr("id", "alerts-shelve-selected")
+                .addClass("btn btn-warning btn-small")
+                .text(i18n.t("alerts.bulk.shelve"))
+        )
+        .append(
+            $("<button>")
+                .attr("type", "button")
+                .attr("id", "alerts-unshelve-selected")
+                .addClass("btn btn-secondary btn-small")
+                .text(i18n.t("alerts.bulk.unshelve"))
+        )
+        .append(
+            $("<button>")
+                .attr("type", "button")
                 .attr("id", "alerts-resolve-selected")
                 .addClass("btn btn-resolve btn-small")
                 .text(i18n.t("alerts.bulk.resolve"))
@@ -256,13 +349,21 @@ function renderAlertsBulkActions() {
     const bar = ensureAlertsBulkActionsBar();
     const count = selectedAlertGroupIds.size;
     const ackCount = selectedAlertGroupsForBulkAction("ack").length;
-    const resolveCount = selectedAlertGroupsForBulkAction(i18n.t("alert_details.bulk.resolve_action")).length;
+    const shelveCount = selectedAlertGroupsForBulkAction("shelve").length;
+    const unshelveCount = selectedAlertGroupsForBulkAction("unshelve").length;
+    const resolveCount = selectedAlertGroupsForBulkAction("resolve").length;
 
     bar.toggle(count > 0);
     bar.find("#alerts-bulk-selected-count").text(i18n.t("alerts.bulk.selected", {count: count}));
     bar.find("#alerts-ack-selected")
         .prop("disabled", ackCount < 1)
         .text(ackCount > 0 ? i18n.t("alerts.bulk.ack_count", {count: ackCount}) : i18n.t("alerts.bulk.ack"));
+    bar.find("#alerts-shelve-selected")
+        .prop("disabled", shelveCount < 1)
+        .text(shelveCount > 0 ? i18n.t("alerts.bulk.shelve_count", {count: shelveCount}) : i18n.t("alerts.bulk.shelve"));
+    bar.find("#alerts-unshelve-selected")
+        .prop("disabled", unshelveCount < 1)
+        .text(unshelveCount > 0 ? i18n.t("alerts.bulk.unshelve_count", {count: unshelveCount}) : i18n.t("alerts.bulk.unshelve"));
     bar.find("#alerts-resolve-selected")
         .prop("disabled", resolveCount < 1)
         .text(resolveCount > 0 ? i18n.t("alerts.bulk.resolve_count", {count: resolveCount}) : i18n.t("alerts.bulk.resolve"));
@@ -446,7 +547,7 @@ function buildAlertsApiUrl() {
 
     const query = params.toString();
 
-    return "/api/alerts" + (query ? "?" + query : "");
+    return "/api/alert-groups" + (query ? "?" + query : "");
 }
 
 
@@ -836,18 +937,71 @@ function loadAlerts() {
     applyAlertsQueryParams();
     initAlertsTableSorting();
 
+    const generation = ++alertsLoadGeneration;
+    let delayedIndicator = null;
+
+    if (window.AppLoading) {
+        if (!alertsHasLoaded) {
+            AppLoading.showTableSkeleton("#alerts-table", {columns: 10, rows: 7});
+        } else {
+            AppLoading.clear("#alerts-loading-indicator");
+            delayedIndicator = AppLoading.delayed(function () {
+                if (generation === alertsLoadGeneration) {
+                    AppLoading.showInline(
+                        "#alerts-loading-indicator",
+                        i18n.t("common.updating")
+                    );
+                }
+            });
+        }
+    }
+
+    function finishAlertsLoading() {
+        if (generation !== alertsLoadGeneration || !window.AppLoading) {
+            return;
+        }
+
+        AppLoading.clearTableBusy("#alerts-table");
+
+        if (delayedIndicator) {
+            delayedIndicator.finish(function () {
+                AppLoading.clear("#alerts-loading-indicator");
+            });
+        } else {
+            AppLoading.clear("#alerts-loading-indicator");
+        }
+    }
+
     loadAlertServiceFilter(function () {
+        if (generation !== alertsLoadGeneration) {
+            return;
+        }
+
         apiGet(buildAlertsApiUrl(), function (response) {
+            if (generation !== alertsLoadGeneration) {
+                return;
+            }
+
             alertsCache = alertsResponseItems(response);
             alertsPagination = alertsResponsePagination(response);
             alertsSummary = alertsResponseSummary(response);
 
             alertsCurrentPage = alertsPagination.page || alertsCurrentPage || 1;
             alertsPageSize = alertsPagination.page_size || alertsPageSize || 25;
+            alertsHasLoaded = true;
 
+            finishAlertsLoading();
             renderAlertsPage();
             writeAlertsQueryParams();
             updateSortableTableHeaders("#alerts-table-view", alertsSortState);
+        }, function (xhr) {
+            if (generation !== alertsLoadGeneration) {
+                return;
+            }
+
+            finishAlertsLoading();
+            $("#alerts-table").empty();
+            showApiError(xhr);
         });
     });
 }
@@ -866,7 +1020,6 @@ function renderAlertsPage() {
     // the same "alerts" prefix, so update the counter last.
     renderAlertsInboxCounter(alertsPagination);
 
-    syncAlertDetailsFromUrl();
     renderAlertsBulkActions();
     renderManualIncidentCreateButton();
 }
@@ -1438,7 +1591,32 @@ function renderAlertExplainSteps(steps) {
                 ].filter(Boolean).join(" / ") || "-")
         );
 
-        if (step.message) {
+        // Never infer a policy from a missing/compact trace. Display the
+        // recorded effective policy only when the backend supplied it.
+        if (step.code === "reopen_policy" && step.data
+            && Number.isInteger(step.data.reopen_window_seconds)) {
+            const seconds = step.data.reopen_window_seconds;
+            const policy = seconds > 0
+                ? i18n.t("alert_details.explain.reopen_enabled", {seconds: seconds})
+                : i18n.t("alert_details.explain.reopen_disabled");
+            const eligibility = seconds > 0 && step.data.eligible === false
+                ? " · " + i18n.t("alert_details.explain.reopen_not_eligible")
+                : "";
+            item.append(
+                $("<div>")
+                    .addClass("alert-reopen-policy")
+                    .text(i18n.t("alert_details.explain.reopen_policy") + ": " + policy + eligibility)
+            );
+        } else if (step.code === "reopen_candidate_not_found") {
+            item.append(
+                $("<div>")
+                    .addClass("alert-reopen-policy")
+                    .text(i18n.t("alert_details.explain.reopen_not_found"))
+            );
+        }
+
+        if (step.message && step.code !== "reopen_policy"
+            && step.code !== "reopen_candidate_not_found") {
             item.append($("<div>").text(step.message));
         }
 
@@ -1481,7 +1659,7 @@ function loadAlertExplainTrace(traceId) {
 
     renderAlertExplainLoading(i18n.t("alert_details.explain.loading"));
 
-    apiGet("/api/alerts/explain/" + encodeURIComponent(traceId), function (trace) {
+    apiGet("/api/alert-groups/explain/" + encodeURIComponent(traceId), function (trace) {
         currentDetailsExplainTraceId = trace.trace_id;
         renderAlertExplainSummary(trace);
         renderAlertExplainSteps(trace.steps || []);
@@ -1505,7 +1683,7 @@ function loadAlertExplainForCurrentDetails() {
     currentDetailsExplainLoadedAlertId = currentDetailsAlertId;
     renderAlertExplainLoading(i18n.t("alert_details.explain.loading_many"));
 
-    apiGet("/api/alerts/" + encodeURIComponent(currentDetailsAlertId) + "/explain", function (traces) {
+    apiGet("/api/alert-groups/" + encodeURIComponent(currentDetailsAlertId) + "/explain", function (traces) {
         const latestTrace = pickLatestAlertExplainTrace(traces);
 
         if (!latestTrace) {
@@ -1518,12 +1696,58 @@ function loadAlertExplainForCurrentDetails() {
 }
 
 function showAlertDetails(alertId) {
+    const isDifferentAlert = currentDetailsAlertId !== alertId;
     currentDetailsAlertId = alertId;
 
+    const initialModal = alertDetailsModal();
+
+    if (
+        initialModal.length
+        && (isDifferentAlert || !initialModal.hasClass("is-open"))
+    ) {
+        currentDetailsAlertCanRespond = false;
+        resetAlertDetailsTabs(alertId);
+
+        initialModal.find("#alert-details-title").text(
+            i18n.t("alert_details.entity.alert_number", {id: alertId})
+        );
+        initialModal.find("#alert-details-subtitle").text(i18n.t("alert_details.loading"));
+        if (window.AppLoading) {
+            AppLoading.showBlock(
+                initialModal.find("#alert-details-overview"),
+                i18n.t("alert_details.loading"),
+                {compact: true}
+            );
+        } else {
+            initialModal.find("#alert-details-overview").empty().append(
+                $("<div>").addClass("help-text").text(i18n.t("alert_details.loading"))
+            );
+        }
+        initialModal.find([
+            "#alert-details-summary",
+            "#alert-group-children",
+            "#alert-details-events",
+            "#alert-details-notifications",
+            "#alert-details-labels",
+            "#alert-details-payload",
+            "#alert-comments-list"
+        ].join(", ")).empty();
+        initialModal.find(
+            "#modal-alert-ack, #modal-alert-shelve, #modal-alert-unshelve, #modal-alert-resolve, #modal-alert-create-incident"
+        ).hide();
+        initialModal.find("#alert-details-action-bar").addClass("is-hidden");
+
+        openAlertDetailsModal();
+    }
+
     apiGet(
-        "/api/alerts/" + alertId
+        "/api/alert-groups/" + alertId
         + "?events_page=1&events_page_size=" + ALERT_EVENTS_PAGE_SIZE,
         function (alert) {
+        if (currentDetailsAlertId !== alertId) {
+            return;
+        }
+
         const modal = alertDetailsModal();
 
         if (!modal.length) {
@@ -1531,8 +1755,13 @@ function showAlertDetails(alertId) {
             return;
         }
 
+        const overview = modal.find("#alert-details-overview");
+        overview.removeAttr("aria-busy");
+        overview.children(".ui-loading-state, .help-text").remove();
+
         currentDetailsAlertId = alert.id;
         currentDetailsAlertCanRespond = canRespondObject(alert);
+        renderAlertDetailsActionBar(alert, modal);
         currentDetailsAlertShelved = Boolean(alert.shelved || (alert.shelve && alert.shelve.active));
         resetAlertDetailsTabs(alert.id);
 
@@ -1553,7 +1782,7 @@ function showAlertDetails(alertId) {
             JSON.stringify(alert.payload_summary || alert.payload || {}, null, 2)
         );
 
-        renderAlertGroupChildren(alert.alerts || [], modal);
+        renderAlertGroupChildren(alert.alerts || [], modal, alert.events || []);
         renderEvents(
             alert.events || [],
             modal,
@@ -1568,6 +1797,8 @@ function showAlertDetails(alertId) {
                 onChange: loadAlerts,
             });
         }
+
+        modal.find("#modal-alert-create-incident").toggle(currentDetailsAlertCanRespond);
 
         if (!currentDetailsAlertCanRespond || normalizeAlertValue(alert.status) === "resolved") {
             modal.find("#modal-alert-ack").hide();
@@ -1584,6 +1815,13 @@ function showAlertDetails(alertId) {
         }
 
         openAlertDetailsModal();
+    }, function (xhr) {
+        if (currentDetailsAlertId !== alertId) {
+            return;
+        }
+
+        closeAlertDetailsModal({updateUrl: false});
+        showApiError(xhr);
     });
 }
 
@@ -1854,6 +2092,17 @@ function renderAlertPrimaryDetails(alert, modal) {
             .addClass("alert-primary-title")
             .text(alert.title || i18n.t("alert_details.entity.alert_number", {id: alert.id}))
     );
+
+    if (alert.recovery_notification_due_at && alert.status === "resolved") {
+        target.append(
+            $("<div>")
+                .addClass("help-text alert-recovery-notification-pending")
+                .attr("role", "status")
+                .text(i18n.t("alert_details.recovery.technical_resolved_pending", {
+                    time: formatDateTimeMinutes(alert.recovery_notification_due_at)
+                }))
+        );
+    }
 
     if (alert.shelved && alert.shelve) {
         const shelfSummary = $("<div>").addClass("help-text alert-shelve-summary");
@@ -2439,6 +2688,15 @@ function renderAlertCorrelation(alert, modal) {
     target.append(body);
 }
 
+function renderAlertDetailsActionBar(alert, modal) {
+    modal.find("#alert-details-context-status").text(statusLabel(alert.status) || "-");
+    modal.find("#alert-details-context-assignee").text(alert.assignee || "-");
+    modal.find("#alert-details-context-acknowledged").text(alert.acknowledged_by || "-");
+    modal.find("#alert-details-context-escalation")
+        .text(alert.next_escalation_at ? formatDateTimeMinutes(alert.next_escalation_at) : "-");
+    modal.find("#alert-details-action-bar").removeClass("is-hidden");
+}
+
 function renderAlertDetailsSummary(alert, modal) {
     const summary = modal.find("#alert-details-summary");
 
@@ -2457,7 +2715,34 @@ function renderAlertDetailsSummary(alert, modal) {
     summary.append(detailItem(i18n.t("alert_details.detail.service_criticality"), alert.service_criticality));
 
     summary.append(detailItem(i18n.t("alert_details.detail.escalation_mode"), alertEscalationModeLabel(alert)));
-    summary.append(detailItem(i18n.t("alert_details.target.escalation_policy"), alert.escalation_policy_name));
+    const policies = alert.policy_context || {};
+    const escalation = policies.escalation || {};
+    const priority = policies.priority || {};
+    const notification = policies.notification || {};
+    summary.append(detailItem(
+        i18n.t("alert_details.target.escalation_policy"),
+        (escalation.name || alert.escalation_policy_name)
+            ? (escalation.name || alert.escalation_policy_name) + " (" + i18n.t("alert_details.policy.selected_on_group") + ")"
+            : "-"
+    ));
+    summary.append(detailItem(
+        i18n.t("alert_details.policy.current_priority"),
+        (priority.name || i18n.t("alert_details.policy.severity_fallback"))
+            + " (" + (priority.source === "service_override"
+                ? i18n.t("alert_details.policy.service_override")
+                : priority.source === "team_default"
+                    ? i18n.t("alert_details.policy.team_default")
+                    : i18n.t("alert_details.policy.severity_fallback")) + ")"
+    ));
+    summary.append(detailItem(
+        i18n.t("alert_details.policy.current_notification"),
+        (notification.name || notification.mode || "-")
+            + " (" + (notification.source === "orchestration_override"
+                ? i18n.t("alert_details.policy.orchestration_override")
+                : notification.source === "service_policy"
+                    ? i18n.t("alert_details.policy.service_override")
+                    : i18n.t("alert_details.policy.route_channels")) + ")"
+    ));
     summary.append(detailItem(i18n.t("alert_details.detail.policy_rule"), alertPolicyRuleLabel(alert)));
     summary.append(detailItem(i18n.t("alert_details.target.rotation"), alert.rotation_name));
     summary.append(detailItem(i18n.t("alert_details.detail.assignee"), alert.assignee));
@@ -2484,11 +2769,16 @@ function ensureAlertGroupChildrenSection(modal) {
 }
 
 
-function renderAlertGroupChildren(alerts, modal) {
+function renderAlertGroupChildren(alerts, modal, events) {
     const section = ensureAlertGroupChildrenSection(modal);
     const target = modal.find("#alert-group-children");
 
     alerts = asArray(alerts);
+    // A reopened occurrence is identified by a persisted event, not guessed
+    // from the current child status or the AlertGroup's previous_status.
+    const reopenedChildIds = new Set(asArray(events).filter(function (event) {
+        return event.event_type === "reopened" && event.alert_id;
+    }).map(function (event) { return Number(event.alert_id); }));
 
     target.empty();
     section.prop("hidden", false);
@@ -2517,11 +2807,22 @@ function renderAlertGroupChildren(alerts, modal) {
         target.append(
             $("<div>")
                 .addClass("alert-child-item")
+                .attr("data-child-alert-id", alert.id)
+                .attr("tabindex", "-1")
                 .append(
                     $("<div>")
                         .addClass("alert-child-header")
                         .append(
-                            $("<span>").text("#" + alert.id + " " + (alert.title || i18n.t("alert_details.entity.alert")))
+                            $("<div>")
+                                .addClass("alert-child-identification")
+                                .append(
+                                    $("<strong>").text("#" + alert.id + " " + (alert.title || i18n.t("alert_details.entity.alert")))
+                                )
+                                .append(reopenedChildIds.has(Number(alert.id))
+                                    ? $("<span>")
+                                        .addClass("alert-child-occurrence-note")
+                                        .text(i18n.t("alert_details.children.reopened_occurrence"))
+                                    : $())
                         )
                         .append(
                             $("<span>")
@@ -2557,6 +2858,24 @@ function renderAlertGroupChildren(alerts, modal) {
     });
 }
 
+function focusAlertChildOccurrence(childAlertId) {
+    const id = Number(childAlertId);
+    if (!Number.isSafeInteger(id) || id <= 0) { return; }
+
+    const card = alertDetailsModal().find("#alert-group-children .alert-child-item")
+        .filter(function () {
+            return Number($(this).attr("data-child-alert-id")) === id;
+        }).first();
+    if (!card.length) { return; }
+
+    setAlertDetailsTab("alerts");
+    alertDetailsModal().find(".alert-child-item").removeClass("is-highlighted");
+    card.addClass("is-highlighted").trigger("focus");
+    if (card[0] && typeof card[0].scrollIntoView === "function") {
+        card[0].scrollIntoView({block: "nearest"});
+    }
+}
+
 function alertEventTypeLabel(eventType) {
     const labels = {
         correlation_detected: i18n.t("alert_details.events.correlation_detected"),
@@ -2567,6 +2886,15 @@ function alertEventTypeLabel(eventType) {
         merged: i18n.t("alert_details.events.merged"),
         merge_target_updated: i18n.t("alert_details.events.merge_target_updated"),
         acknowledged: i18n.t("alert_details.events.acknowledged"),
+        reopened: i18n.t("alert_details.events.reopened"),
+        recovery_notification_scheduled: i18n.t("alert_details.recovery.scheduled"),
+        recovery_notification_cancelled: i18n.t("alert_details.recovery.cancelled"),
+        recovery_notification_sent: i18n.t("alert_details.recovery.sent"),
+        recovery_notification_skipped: i18n.t("alert_details.recovery.skipped"),
+        recovery_notification_retry_scheduled: i18n.t("alert_details.recovery.retry_scheduled"),
+        recovery_notification_partial: i18n.t("alert_details.recovery.partial"),
+        recovery_notification_failed: i18n.t("alert_details.recovery.failed"),
+        recovery_delivery_exhausted: i18n.t("alert_details.recovery.exhausted"),
         resolved: i18n.t("alert_details.responder.resolved"),
         notification: i18n.t("alert_details.events.notification"),
         reminder: i18n.t("alert_details.events.reminder"),
@@ -2582,7 +2910,7 @@ function loadAlertEventsPage(groupId, page, append) {
     }
 
     apiGet(
-        "/api/alerts/" + groupId
+        "/api/alert-groups/" + groupId
         + "/events?page=" + encodeURIComponent(page || 1)
         + "&page_size=" + ALERT_EVENTS_PAGE_SIZE,
         function (response) {
@@ -2623,27 +2951,29 @@ function renderEvents(events, modal, pagination, append) {
     }
 
     events.forEach(function (event) {
-        target.append(
-            $("<div>")
-                .addClass("event-item")
-                .append(
-                    $("<div>")
-                        .addClass("event-title")
-                        .text(
-                            "#" + event.id + " "
-                            + alertEventTypeLabel(event.event_type)
-                        )
-                )
-                .append(
-                    $("<div>")
-                        .addClass("table-subtitle")
-                        .text(
-                            formatDateTimeMinutes(event.created_at)
-                            + " "
-                            + (event.message || "")
-                        )
-                )
-        );
+        const row = $("<div>")
+            .addClass("event-item")
+            .append(
+                $("<div>")
+                    .addClass("event-title")
+                    .text("#" + event.id + " " + alertEventTypeLabel(event.event_type))
+            )
+            .append(
+                $("<div>")
+                    .addClass("table-subtitle")
+                    .text(formatDateTimeMinutes(event.created_at) + " " + (event.message || ""))
+            );
+
+        if (event.event_type === "reopened" && event.alert_id) {
+            row.append(
+                $("<button>")
+                    .attr("type", "button")
+                    .addClass("btn btn-secondary btn-small alert-event-child-link")
+                    .text(i18n.t("alert_details.events.view_child", {id: event.alert_id}))
+                    .on("click", function () { focusAlertChildOccurrence(event.alert_id); })
+            );
+        }
+        target.append(row);
     });
 
     if (pagination && pagination.has_next) {
@@ -2990,6 +3320,35 @@ $(document).on("keydown", function (event) {
         closeAlertDetailsModal();
     }
 });
+$(document).on("click", "#modal-alert-create-incident", function () {
+    if (!currentDetailsAlertId || !currentDetailsAlertCanRespond) {
+        return;
+    }
+    const button = $(this);
+    if (window.AppLoading) {
+        AppLoading.setButtonLoading(button, true);
+    }
+    apiPost(
+        "/api/alert-groups/" + currentDetailsAlertId + "/create-incident",
+        {},
+        function (incident) {
+            if (window.AppLoading) {
+                AppLoading.setButtonLoading(button, false);
+            }
+            closeAlertDetailsModal({updateUrl: false});
+            if (incident && incident.id) {
+                navigate("/incidents/" + incident.id, true);
+            }
+        },
+        function (xhr) {
+            if (window.AppLoading) {
+                AppLoading.setButtonLoading(button, false);
+            }
+            showApiError(xhr);
+        }
+    );
+});
+
 $(document).on("click", "#modal-alert-ack", function () {
     if (!currentDetailsAlertId) {
         return;
@@ -2999,35 +3358,94 @@ $(document).on("click", "#modal-alert-ack", function () {
         return;
     }
 
-    apiPost("/api/alerts/" + currentDetailsAlertId + "/ack", {}, function () {
+    const button = $(this);
+    if (window.AppLoading) {
+        AppLoading.setButtonLoading(button, true);
+    }
+
+    apiPost("/api/alert-groups/" + currentDetailsAlertId + "/acknowledge", {}, function () {
+        if (window.AppLoading) {
+            AppLoading.setButtonLoading(button, false);
+        }
         showAlertDetails(currentDetailsAlertId);
         loadAlerts();
+    }, function (xhr) {
+        if (window.AppLoading) {
+            AppLoading.setButtonLoading(button, false);
+        }
+        showApiError(xhr);
     });
 });
 $(document).on("click", "#modal-alert-shelve", function () {
     if (!currentDetailsAlertId || !currentDetailsAlertCanRespond) {
         return;
     }
-    $("#alert-shelve-duration").val("3600");
-    $("#alert-shelve-reason").val("");
-    openAppModal("#alert-shelve-modal");
+
+    openAlertShelveModal(currentDetailsAlertId, {
+        canRespond: currentDetailsAlertCanRespond,
+    });
 });
 $(document).on("click", "#close-alert-shelve, #cancel-alert-shelve", function () {
+    resetAlertShelveContext();
     closeAppModal("#alert-shelve-modal");
 });
 $(document).on("click", "#confirm-alert-shelve", function () {
-    if (!currentDetailsAlertId || !currentDetailsAlertCanRespond) {
+    if (!currentShelveAlertId || !currentShelveAlertCanRespond) {
         return;
     }
+
+    const button = $(this);
+    const targetId = currentShelveAlertId;
+    const targetIds = currentShelveAlertIds.length
+        ? currentShelveAlertIds.slice()
+        : [targetId];
+    const isBulk = currentShelveBulkMode;
+    const onSuccess = currentShelveSuccessCallback;
     const durationSeconds = Number($("#alert-shelve-duration").val() || 3600);
     const reason = String($("#alert-shelve-reason").val() || "").trim();
-    apiPost(
-        "/api/alerts/" + currentDetailsAlertId + "/shelve",
-        {duration_seconds: durationSeconds, reason: reason || null},
-        function () {
+    const payload = {duration_seconds: durationSeconds, reason: reason || null};
+
+    if (window.AppLoading) {
+        AppLoading.setButtonLoading(button, true);
+    }
+
+    if (isBulk) {
+        runAlertGroupBulkAction("shelve", targetIds, payload, function () {
+            if (window.AppLoading) {
+                AppLoading.setButtonLoading(button, false);
+            }
             closeAppModal("#alert-shelve-modal");
-            showAlertDetails(currentDetailsAlertId);
+            resetAlertShelveContext();
+            selectedAlertGroupIds.clear();
             loadAlerts();
+        });
+        return;
+    }
+
+    apiPost(
+        "/api/alert-groups/" + targetId + "/shelve",
+        payload,
+        function () {
+            if (window.AppLoading) {
+                AppLoading.setButtonLoading(button, false);
+            }
+
+            closeAppModal("#alert-shelve-modal");
+            resetAlertShelveContext();
+
+            if (onSuccess) {
+                onSuccess(targetId);
+                return;
+            }
+
+            showAlertDetails(targetId);
+            loadAlerts();
+        },
+        function (xhr) {
+            if (window.AppLoading) {
+                AppLoading.setButtonLoading(button, false);
+            }
+            showApiError(xhr);
         }
     );
 });
@@ -3035,9 +3453,23 @@ $(document).on("click", "#modal-alert-unshelve", function () {
     if (!currentDetailsAlertId || !currentDetailsAlertCanRespond) {
         return;
     }
-    apiPost("/api/alerts/" + currentDetailsAlertId + "/unshelve", {}, function () {
+
+    const button = $(this);
+    if (window.AppLoading) {
+        AppLoading.setButtonLoading(button, true);
+    }
+
+    apiPost("/api/alert-groups/" + currentDetailsAlertId + "/unshelve", {}, function () {
+        if (window.AppLoading) {
+            AppLoading.setButtonLoading(button, false);
+        }
         showAlertDetails(currentDetailsAlertId);
         loadAlerts();
+    }, function (xhr) {
+        if (window.AppLoading) {
+            AppLoading.setButtonLoading(button, false);
+        }
+        showApiError(xhr);
     });
 });
 $(document).on("click", "#modal-alert-resolve", function () {
@@ -3049,9 +3481,22 @@ $(document).on("click", "#modal-alert-resolve", function () {
         return;
     }
 
-    apiPost("/api/alerts/" + currentDetailsAlertId + "/resolve", {}, function () {
+    const button = $(this);
+    if (window.AppLoading) {
+        AppLoading.setButtonLoading(button, true);
+    }
+
+    apiPost("/api/alert-groups/" + currentDetailsAlertId + "/resolve", {}, function () {
+        if (window.AppLoading) {
+            AppLoading.setButtonLoading(button, false);
+        }
         showAlertDetails(currentDetailsAlertId);
         loadAlerts();
+    }, function (xhr) {
+        if (window.AppLoading) {
+            AppLoading.setButtonLoading(button, false);
+        }
+        showApiError(xhr);
     });
 });
 function loadAlertServiceFilter(callback) {
@@ -3123,6 +3568,13 @@ function loadAlertServiceFilter(callback) {
         if (typeof callback === "function") {
             callback();
         }
+    }, function (xhr) {
+        alertsServiceFilterApplying = false;
+        showApiError(xhr);
+
+        if (typeof callback === "function") {
+            callback();
+        }
     });
 }
 window.addEventListener("popstate", function () {
@@ -3187,33 +3639,108 @@ $(document).on("click", "#alerts-ack-selected", function () {
     bulkUpdateSelectedAlertGroups("ack");
 });
 
+$(document).on("click", "#alerts-shelve-selected", function () {
+    bulkShelveSelectedAlertGroups();
+});
+
+$(document).on("click", "#alerts-unshelve-selected", function () {
+    bulkUnshelveSelectedAlertGroups();
+});
+
 $(document).on("click", "#alerts-resolve-selected", function () {
-    bulkUpdateSelectedAlertGroups(i18n.t("alert_details.bulk.resolve_action"));
+    bulkUpdateSelectedAlertGroups("resolve");
 });
 
 $(document).on("click", "#alerts-merge-selected", function () {
     mergeSelectedAlertGroups();
 });
 
-function runAlertGroupBulkAction(action, ids, onDone) {
+function runAlertGroupBulkAction(action, ids, payload, onDone) {
+    if (typeof payload === "function") {
+        onDone = payload;
+        payload = {};
+    }
+
     const queue = ids.slice();
+    const failures = [];
+    const requestPayload = payload || {};
 
     function next() {
         const id = queue.shift();
 
         if (!id) {
+            if (failures.length) {
+                showApiError(failures[0].xhr);
+            }
             if (typeof onDone === "function") {
-                onDone();
+                onDone(failures);
             }
             return;
         }
 
-        apiPost("/api/alerts/" + id + "/" + action, {}, next);
+        const endpointAction = action === "ack" ? "acknowledge" : action;
+        apiPost(
+            "/api/alert-groups/" + id + "/" + endpointAction,
+            requestPayload,
+            next,
+            function (xhr) {
+                failures.push({id: id, xhr: xhr});
+                next();
+            }
+        );
     }
 
     next();
 }
 
+function bulkShelveSelectedAlertGroups() {
+    const candidates = selectedAlertGroupsForBulkAction("shelve");
+    const ids = candidates.map(function (alert) {
+        return Number(alert.id);
+    }).filter(Boolean);
+
+    if (!ids.length) {
+        showAppError(i18n.t("alerts.bulk.shelve_required"));
+        return;
+    }
+
+    currentShelveAlertId = ids[0];
+    currentShelveAlertIds = ids;
+    currentShelveAlertCanRespond = true;
+    currentShelveBulkMode = true;
+    currentShelveSuccessCallback = null;
+    configureAlertShelveModal(true, ids.length);
+    $("#alert-shelve-duration").val("3600");
+    $("#alert-shelve-reason").val("");
+    openAppModal("#alert-shelve-modal");
+}
+
+function bulkUnshelveSelectedAlertGroups() {
+    const candidates = selectedAlertGroupsForBulkAction("unshelve");
+    const ids = candidates.map(function (alert) {
+        return Number(alert.id);
+    }).filter(Boolean);
+
+    if (!ids.length) {
+        showAppError(i18n.t("alerts.bulk.unshelve_required"));
+        return;
+    }
+
+    showAppConfirm({
+        title: i18n.t("alerts.bulk.unshelve_title"),
+        message: i18n.t("alert_details.bulk.message", {
+            action: i18n.t("alerts.bulk.unshelve_action"),
+            count: ids.length
+        }),
+        confirmText: i18n.t("alerts.bulk.unshelve_confirm"),
+        confirmClass: "btn-warning"
+    }).done(function () {
+        runAlertGroupBulkAction("unshelve", ids, function () {
+            selectedAlertGroupIds.clear();
+            loadAlerts();
+        });
+    });
+}
 
 function bulkUpdateSelectedAlertGroups(action) {
     const candidates = selectedAlertGroupsForBulkAction(action);
@@ -3283,8 +3810,7 @@ function mergeSelectedAlertGroups() {
         confirmText: i18n.t("alert_details.merge.confirm"),
         confirmClass: "btn-warning"
     }).done(function () {
-        apiPost("/api/alerts/merge", {
-            target_group_id: targetId,
+        apiPost("/api/alert-groups/" + targetId + "/merge", {
             source_group_ids: sourceIds,
             reason: i18n.t("alert_details.merge.reason")
         }, function () {
@@ -3316,7 +3842,7 @@ function openAlertDetailsForTrace(traceId) {
         return;
     }
 
-    $.getJSON(`/api/alerts/explain/${encodeURIComponent(traceId)}`)
+    $.getJSON(`/api/alert-groups/explain/${encodeURIComponent(traceId)}`)
         .done((trace) => {
             closeAlertExplainLookupModal();
 
@@ -3531,7 +4057,7 @@ function loadManualIncidentTeams(callback) {
 }
 
 function loadManualIncidentPriorities(callback) {
-    apiGet("/api/incidents/priorities", function (response) {
+    apiGet("/api/alert-groups/priorities", function (response) {
         manualIncidentPriorities = asArray(response);
         renderManualIncidentPriorityOptions();
 
@@ -3636,7 +4162,7 @@ function saveManualIncident() {
         return;
     }
 
-    apiPost("/api/incidents", payload, function (incident) {
+    apiPost("/api/alert-groups", payload, function (incident) {
         closeAppModal("#manual-incident-modal");
 
         if (incident && incident.id) {
@@ -3689,7 +4215,7 @@ $(document).on("keydown", "#manual-incident-title, #manual-incident-message", fu
 function canCreateManualIncidentForTeam(team) {
     const permissions = (team && team.permissions) || {};
 
-    return Boolean(permissions.can_create_manual_incident);
+    return Boolean(permissions.can_create_manual_alert_group);
 }
 
 function loadManualIncidentPermissions(callback) {

@@ -27,7 +27,7 @@ IncidentRelay already provides most of the technical foundation:
 - acknowledgement, resolution, escalation and notification delivery are supported;
 - service and business impact are calculated from alert groups;
 - audit events are already written for many incident actions;
-- `/api/incidents` currently exposes alert groups as incidents.
+- Before 2.3, `/api/incidents` exposed AlertGroups as incidents; 2.3 replaces that contract with first-class Incidents and moves technical operations to `/api/alert-groups`.
 
 The missing part is a separate operational Incident entity. The current manual incident workflow must remain available as manual Alert Group creation, while manual Incident creation must create an actual Incident.
 
@@ -834,6 +834,59 @@ Recommended migration strategy:
 
 Database migration must preserve supported historical data, but preserving data does not imply preserving old API semantics.
 
+## 17.1 Forward-compatible Alert Handling contract
+
+IncidentRelay 2.10 extends AlertGroup handling without changing the staged
+2.3-2.9 responsibility boundary.
+
+The configuration domains remain separate:
+
+```text
+Rotation / On-call Role
+  Who is currently on call?
+
+EscalationPolicy
+  Who is paged next and when?
+
+NotificationPolicy
+  Where configured lifecycle/delivery events are sent?
+
+PriorityPolicy
+  How is P1-P5 determined?
+
+AlertHandlingPolicy
+  What does ACK/handling mean for this AlertGroup?
+```
+
+`AlertHandlingPolicy` is a reusable, team-owned handling configuration. The
+initial resolution model is:
+
+```text
+Service override
+  -> Team default
+  -> compatibility defaults
+```
+
+Compatibility defaults preserve existing installations: ACK does not
+automatically claim the AlertGroup, handling SLA is disabled, and new lifecycle
+deliveries are not enabled unless configured.
+
+The first acknowledgement remains authoritative for
+`acknowledged_by`/`acknowledged_at`. Repeated ACK remains idempotent.
+
+AlertGroup technical ownership and Incident operational ownership remain
+independent. `claim_on_ack`, when enabled in 2.10, may affect only
+`AlertGroup.assignee`; it never silently rewrites `Incident.assignee`.
+
+To avoid rework in later releases:
+
+- 2.7 lifecycle/event hooks must accept explicit future AlertGroup lifecycle
+  event types without being redesigned around intake-only events;
+- 2.8 outbox/retry/idempotency/dead-letter infrastructure must be reusable for
+  provider-neutral outbound work rather than being Jira-only.
+
+Tracked implementation: #96. Originating request: #95.
+
 ## 18. Versioned delivery roadmap
 
 ### IncidentRelay 2.3: Incident Core and ownership
@@ -920,6 +973,23 @@ Database migration must preserve supported historical data, but preserving data 
   idempotent migrations with reconciliation and documented rollback boundary;
 - never create historical Incidents solely to simplify cleanup.
 
+<!-- incidentrelay-2.10-release:start -->
+### IncidentRelay 2.10: Alert Handling Policies, lifecycle notifications and handling SLA
+
+- team-owned reusable `AlertHandlingPolicy`;
+- team default policy with optional Service override;
+- opt-in `claim_on_ack`, disabled by default;
+- priority-based handling SLA with stable effective-rule snapshot when handling starts;
+- `acknowledged`, `resolved` and `handling_overdue` lifecycle events available to Notification Policy;
+- structured lifecycle webhook delivery through the normal outbound delivery path;
+- asynchronous/idempotent overdue evaluation;
+- AlertGroup technical assignment remains independent from Incident operational ownership;
+- reuse 2.7 lifecycle hooks and 2.8 provider-neutral outbound reliability infrastructure;
+- complete RBAC, audit, timeline, migration, concurrency, OpenAPI, localization, tests and documentation.
+
+Tracked implementation: #96. Originating request: #95.
+<!-- incidentrelay-2.10-release:end -->
+
 ### Cross-release hardening rule
 
 Every release includes the RBAC, audit, timeline, migrations, concurrency,
@@ -965,3 +1035,22 @@ The architecture is successful when:
 - external ticketing can be added without provider-specific fields in the core model;
 - the current notification and escalation lifecycle remains stable;
 - all access is enforced using existing group/team RBAC.
+
+### 2.3 implementation note: Incident Core persistence and concurrency
+
+The 2.3 Incident Core implementation uses a dedicated first-class `Incident`
+row and historical `IncidentAlertGroupLink` rows. Operational mutations are
+serialized with optimistic concurrency using `Incident.row_version`: clients
+must submit the version they read, and stale writes are rejected instead of
+silently overwriting a newer Incident state.
+
+The core service centrally validates Incident workflow transitions. Incident
+assignment changes only `Incident.assignee`; it does not acknowledge a linked
+AlertGroup and does not change AlertGroup rotation, escalation state, or
+technical assignee. Basic 2.3 linking supports `primary` and `related`
+relations. Unlinking marks a link historical (`removed_at`) rather than deleting
+it, so a later re-link creates a new auditable relation row.
+
+Every core mutation writes an `IncidentEvent` operational timeline record and
+an `AuditLog` entry. AlertGroup technical comments and technical timeline remain
+separate and unchanged.

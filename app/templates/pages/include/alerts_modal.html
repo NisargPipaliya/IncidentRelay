@@ -1,9 +1,14 @@
-<div id="alert-details-modal" class="app-modal" style="display: none;">
+<div
+  id="alert-details-modal"
+  class="app-modal{% if initial_alert_id %} is-open{% endif %}"
+  style="display: {{ 'flex' if initial_alert_id else 'none' }};"
+  aria-hidden="{{ 'false' if initial_alert_id else 'true' }}"
+>
   <div class="app-modal-dialog app-modal-dialog-wide">
     <div class="app-modal-header">
       <div>
-        <h2 id="alert-details-title">{{ _('alert_details.title') }}</h2>
-        <div id="alert-details-subtitle" class="card-subtitle"></div>
+        <h2 id="alert-details-title">{{ _('alert_details.entity.alert_number', id=initial_alert_id) if initial_alert_id else _('alert_details.title') }}</h2>
+        <div id="alert-details-subtitle" class="card-subtitle">{% if initial_alert_id %}{{ _('alert_details.loading') }}{% endif %}</div>
       </div>
 
       <button
@@ -17,6 +22,31 @@
     </div>
 
     <div class="app-modal-body">
+      <div id="alert-details-action-bar" class="alert-details-action-bar is-hidden">
+        <div class="alert-details-action-context">
+          <span><small>{{ _('alerts.table.status') }}</small><strong id="alert-details-context-status">-</strong></span>
+          <span><small>{{ _('alert_details.detail.assignee') }}</small><strong id="alert-details-context-assignee">-</strong></span>
+          <span><small>{{ _('alert_details.detail.acknowledged_by') }}</small><strong id="alert-details-context-acknowledged">-</strong></span>
+          <span><small>{{ _('alert_details.detail.next_escalation') }}</small><strong id="alert-details-context-escalation">-</strong></span>
+        </div>
+        <div class="alert-details-action-buttons">
+          <button id="modal-alert-ack" type="button" class="btn btn-warning btn-small"{% if initial_alert_id %} style="display: none;"{% endif %}>
+        {{ _('alert_details.actions.acknowledge') }}
+      </button>
+          <button id="modal-alert-shelve" type="button" class="btn btn-secondary btn-small"{% if initial_alert_id %} style="display: none;"{% endif %}>
+        {{ _('alert_details.actions.shelve') }}
+      </button>
+          <button id="modal-alert-unshelve" type="button" class="btn btn-secondary btn-small" style="display: none;">
+        {{ _('alert_details.actions.unshelve') }}
+      </button>
+          <button id="modal-alert-resolve" type="button" class="btn btn-resolve btn-small"{% if initial_alert_id %} style="display: none;"{% endif %}>
+        {{ _('alert_details.actions.resolve') }}
+      </button>
+          <button id="modal-alert-create-incident" type="button" class="btn btn-primary btn-small" style="display: none;">
+        {{ _('alerts.actions.create_incident') }}
+      </button>
+        </div>
+      </div>
       <div
         id="alert-details-tabs"
         class="page-tabs alert-details-tabs"
@@ -86,7 +116,14 @@
           data-alert-details-panel="summary"
           role="tabpanel"
         >
-          <div id="alert-details-overview"></div>
+          <div id="alert-details-overview">
+            {% if initial_alert_id %}
+              <div class="ui-loading-state ui-loading-state-compact" role="status" aria-live="polite">
+                <span class="ui-loading-spinner ui-loading-spinner-small" aria-hidden="true"></span>
+                <span class="ui-loading-message">{{ _('alert_details.loading') }}</span>
+              </div>
+            {% endif %}
+          </div>
 
           <section class="details-section alert-comments-section">
             <div class="details-section-header">
@@ -206,21 +243,6 @@
     </div>
 
     <div class="app-modal-footer">
-      <button id="modal-alert-ack" type="button" class="btn btn-warning btn-small">
-        {{ _('alert_details.actions.acknowledge') }}
-      </button>
-
-      <button id="modal-alert-shelve" type="button" class="btn btn-secondary btn-small">
-        {{ _('alert_details.actions.shelve') }}
-      </button>
-
-      <button id="modal-alert-unshelve" type="button" class="btn btn-secondary btn-small" style="display: none;">
-        {{ _('alert_details.actions.unshelve') }}
-      </button>
-
-      <button id="modal-alert-resolve" type="button" class="btn btn-resolve btn-small">
-        {{ _('alert_details.actions.resolve') }}
-      </button>
 
       <button id="close-alert-details-footer" type="button" class="btn btn-small">
         {{ _('alert_details.close') }}
@@ -233,8 +255,8 @@
   <div class="app-modal-dialog">
     <div class="app-modal-header">
       <div>
-        <h3>{{ _('alert_details.shelve.title') }}</h3>
-        <div class="help-text">{{ _('alert_details.shelve.help') }}</div>
+        <h3 id="alert-shelve-title">{{ _('alert_details.shelve.title') }}</h3>
+        <div id="alert-shelve-help" class="help-text">{{ _('alert_details.shelve.help') }}</div>
       </div>
       <button id="close-alert-shelve" type="button" class="btn btn-small">×</button>
     </div>

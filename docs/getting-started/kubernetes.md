@@ -65,6 +65,56 @@ Watch the rollout:
 kubectl get pods -l app.kubernetes.io/instance=incidentrelay -w
 ```
 
+## Non-root pod security (2.3.1 and later)
+
+The chart runs all four workloads **and the optional custom-CA init container**
+with secure defaults: `runAsNonRoot: true`, UID/GID `10001`, `fsGroup: 10001`
+with `fsGroupChangePolicy: OnRootMismatch`, no privilege escalation or Linux
+capabilities, and `RuntimeDefault` seccomp. These are set in
+`podSecurityContext` and `securityContext` in `values.yaml` and can be
+customized for your storage and security policies.
+
+```yaml
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 10001
+  runAsGroup: 10001
+  fsGroup: 10001
+  fsGroupChangePolicy: OnRootMismatch
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop: [ALL]
+  seccompProfile:
+    type: RuntimeDefault
+```
+
+**Upgrade preflight:** take a backup of the SQLite PVC, then check that the
+existing `/var/lib/incidentrelay` PVC (including SQLite, runtime config and
+lock files) is writable by UID/GID `10001`. The chart does **not** run a root
+permission-repair init container. Kubernetes `fsGroup` adjusts permissions for
+many supported volumes; NFS with `root_squash`, some CSI drivers and existing
+PVCs for which `OnRootMismatch` skips recursion may need a one-time
+storage-side permission repair. If a PV cannot provide appropriate access,
+fix it before upgrading, or choose a compatible non-root `runAsUser` /
+`runAsGroup` / `fsGroup` in your Helm values. Do not use a root workload as a
+permanent workaround.
+
+`customCA` uses an `emptyDir` for the combined bundle, written by the same
+non-root UID as the main container. External Secret/ConfigMap mounts and
+`configFrom` files must remain readable by the configured UID. If an OpenShift
+policy forces an arbitrary UID, provide writable volumes and a compatible
+`fsGroup`; the entrypoint falls back to `HOME=/tmp` if the image home cannot be
+written.
+
+Verify after rollout:
+
+```bash
+kubectl exec deploy/incidentrelay-web -- id
+kubectl exec deploy/incidentrelay-web -- test -w /var/lib/incidentrelay
+kubectl get pods -l app.kubernetes.io/instance=incidentrelay
+```
+
 ## Configuration
 
 IncidentRelay reads every setting from a single INI file mounted at `/etc/incidentrelay/incidentrelay.conf`. The chart renders that file from the `config` map in `values.yaml`: top-level keys become INI sections, nested keys become options.
@@ -124,6 +174,47 @@ When `existingConfigSecret` is set, the `config` map is ignored and the chart re
 !!! note
     The chart adds a `checksum/config` pod annotation so config changes restart the pods automatically. With `existingConfigSecret` the chart cannot see the content, so the annotation is omitted — restart the pods yourself after changing the Secret.
 
+### Secrets from existing Secrets or files
+
+To keep credentials out of `values.yaml`, take any option from a Secret, a ConfigMap or a file with `configFrom`. Keys are `<section>.<option>`, and each entry sets exactly one of `secretKeyRef`, `configMapKeyRef` or `file`:
+
+```yaml
+configFrom:
+  main.secret_key:
+    secretKeyRef:
+      name: incidentrelay-secrets
+      key: secret-key
+  database.password:
+    secretKeyRef:
+      name: incidentrelay-db
+      key: password
+  smtp.password:
+    file: /mnt/secrets-store/smtp-password
+```
+
+The chart passes them to every component as `INCIDENTRELAY__<SECTION>__<OPTION>` environment variables, which take precedence over `incidentrelay.conf` (see [Environment overrides](configuration.md#environment-overrides)). When `main.secret_key` comes from `configFrom`, it no longer has to be set in `config`, and the shared keys left empty (`main.secret_encryption_key`, `auth.jwt_secret`, `mattermost.action_secret`, `voice.callback_secret`) fall back to it, with `existingConfigSecret` too, so every pod uses the same keys. Don't set the same option in `configFrom` and in a component's `extraEnv` as well: a Deployment can't hold the same variable twice, so the chart refuses to render it.
+
+`file` works with any volume mounted into the pods, for example the [Secrets Store CSI Driver](https://secrets-store-csi-driver.sigs.k8s.io/) with a `SecretProviderClass` for AWS Systems Manager Parameter Store, Secrets Manager or Vault:
+
+```yaml
+extraVolumes:
+  - name: secrets-store
+    csi:
+      driver: secrets-store.csi.k8s.io
+      readOnly: true
+      volumeAttributes:
+        secretProviderClass: incidentrelay
+extraVolumeMounts:
+  - name: secrets-store
+    mountPath: /mnt/secrets-store
+    readOnly: true
+```
+
+Use `serviceAccount.annotations` to give the pods access to the cloud provider, for example with IAM roles for service accounts on EKS.
+
+!!! note
+    Pods are not restarted when a referenced Secret or file changes. Restart them after rotating a value.
+
 ## Database
 
 ### SQLite (default)
@@ -167,6 +258,8 @@ persistence:
   enabled: false
 ```
 
+To keep the password out of `values.yaml`, set `database.password` with [`configFrom`](#secrets-from-existing-secrets-or-files) instead.
+
 ## Migrations and scaling the web component
 
 By default the web pod runs migrations in its entrypoint before Gunicorn starts:
@@ -203,6 +296,55 @@ The web deployment is wired to the unauthenticated probe endpoints:
 ```
 
 A startup probe allows up to five minutes for the first boot, which covers migrations on a fresh database.
+
+## Metrics
+
+The web component can serve Prometheus metrics at `/metrics` (see the [Metrics section](configuration.md#metrics-section)). Turn the endpoint on in the config and protect it with a token from a Secret:
+
+```bash
+kubectl create secret generic incidentrelay-metrics \
+  --namespace incidentrelay \
+  --from-literal=token="$(openssl rand -hex 32)"
+```
+
+```yaml
+config:
+  metrics:
+    enabled: true
+configFrom:
+  metrics.auth_token:
+    secretKeyRef:
+      name: incidentrelay-metrics
+      key: token
+```
+
+Turn metrics on in `config` or `configFrom` rather than only through `web.extraEnv`: the scheduler and the chat workers read the setting too, and the scheduler records its heartbeat only while metrics are enabled.
+
+With the Prometheus Operator, the chart can also render a ServiceMonitor that scrapes the web Service. It sends the token from the Secret the web pod takes `metrics.auth_token` from, through a `secretKeyRef` in `configFrom` or in `web.extraEnv`:
+
+```yaml
+serviceMonitor:
+  enabled: true
+  interval: 30s
+  labels:
+    release: kube-prometheus-stack  # the labels your Prometheus selects ServiceMonitors by
+```
+
+When the chart can't tell which Secret holds the token, for example with `existingConfigSecret`, a token from a file or a plain value, point the ServiceMonitor at the Secret key that holds it:
+
+```yaml
+serviceMonitor:
+  enabled: true
+  bearerTokenSecret:
+    name: incidentrelay-metrics
+    key: token
+```
+
+Prometheus must also be allowed to discover ServiceMonitors in the namespace where IncidentRelay is installed: the labels above only match its `serviceMonitorSelector`, while its `serviceMonitorNamespaceSelector` decides which namespaces it looks in.
+
+The chart refuses to render a ServiceMonitor it knows can't scrape: when metrics are disabled in `config.metrics.enabled` or in an `INCIDENTRELAY__METRICS__ENABLED` variable in `web.extraEnv`, when `metrics.auth_token` is set but the chart can't tell which Secret holds it, or when `bearerTokenSecret` points at a different Secret than the web pod uses. The check is best-effort: values from Secrets, ConfigMaps, files or `existingConfigSecret` aren't visible to the chart, so it can't guarantee a successful scrape.
+
+Only the web pod serves `/metrics`, so counters recorded by the scheduler and the chat workers aren't scraped; the gauges computed from the database are. Every pod keeps its counter files in its own `emptyDir` at `/var/lib/incidentrelay/metrics`, so several web replicas don't share them.
 
 ## Access
 

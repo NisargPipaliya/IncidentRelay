@@ -164,7 +164,7 @@ def test_all_failed_channels_stop_after_bounded_retries(db, monkeypatch):
     monkeypatch.setattr(
         "app.services.notifications.delivery.get_notifier", lambda kind: FailingNotifier(),
     )
-    for i in range(notification_queue.RECOVERY_MAX_ATTEMPTS):
+    for _i in range(notification_queue.RECOVERY_MAX_ATTEMPTS):
         force_due(group)
         result = notification_queue.process_due_alert_group_notifications()
         assert result["failed"] == 1

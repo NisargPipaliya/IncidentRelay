@@ -11,7 +11,7 @@ from app.modules.db.models import Alert, AlertGroup
 from app.services.alerts.lifecycle import upsert_alert
 from app.services.alerts import lifecycle
 from app.services.orchestration.runtime import RuntimeResult
-from tests.factories import create_channel, create_group, create_route, create_team, unique
+from tests.factories import create_channel, create_group, create_route, create_team, create_user, unique
 
 pytestmark = pytest.mark.postgresql
 
@@ -212,3 +212,75 @@ def test_resolved_user_rule_send_is_serialized_before_reopen(db, monkeypatch):
     assert AlertGroup.get_by_id(group.id).status == "firing"
     assert upsert_alert(dict(data, status="resolved")).group.status == "resolved"
     assert rules.send_delivery(delivery) == 0  # Already sent in the previous cycle.
+
+
+def test_manual_resolve_during_uncommitted_reopen_is_noop(db, monkeypatch):
+    """A resolve reading the old committed state cannot destroy the new child.
+
+    The reopening thread has already locked and changed the group but has not
+    committed its new occurrence. The resolver sees the previously committed
+    resolved state and must not apply a stale write to the new cycle.
+    """
+    if "postgres" not in db.__class__.__name__.lower():
+        pytest.skip("requires PostgreSQL")
+
+    from threading import Event
+    from app.modules.db import alerts_repo
+    from app.services.alerts.actions import resolve_alert
+
+    scope = create_group()
+    team = create_team(scope)
+    route = create_route(team, source="alertmanager", group_by=["alertname"])
+    monkeypatch.setattr(
+        lifecycle, "run_event_orchestration",
+        lambda data, trace=None: RuntimeResult(grouping_reopen_window_seconds=120),
+    )
+    data = {
+        "source": "alertmanager", "forced_route_id": route.id,
+        "external_id": unique("resolve-race"), "dedup_key": unique("resolve-race-key"),
+        "title": "DiskFull", "severity": "critical", "status": "firing",
+        "labels": {"alertname": "DiskFull"}, "payload": {},
+    }
+    initial = upsert_alert(dict(data))
+    upsert_alert(dict(data, status="resolved"))
+
+    entered = Event()
+    release = Event()
+    original_create = alerts_repo.create_alert
+
+    def block_new_child(**kwargs):
+        entered.set()
+        assert release.wait(timeout=20)
+        return original_create(**kwargs)
+
+    monkeypatch.setattr(alerts_repo, "create_alert", block_new_child)
+
+    def reopen():
+        with database_proxy.obj.connection_context():
+            return upsert_alert(dict(data))
+
+    def resolve():
+        with database_proxy.obj.connection_context():
+            return resolve_alert(
+                initial.group.id, update_messages=False,
+                defer_stakeholder_notification=True,
+            ).status
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        reopening = executor.submit(reopen)
+        try:
+            assert entered.wait(timeout=15)
+            # Read-committed should see resolved, not the uncommitted reopen.
+            resolving = executor.submit(resolve)
+            assert resolving.result(timeout=15) == "resolved"
+        finally:
+            release.set()
+        result = reopening.result(timeout=30)
+
+    assert result.outcome == "reopened"
+    assert result.group.id == initial.group.id
+    assert AlertGroup.get_by_id(initial.group.id).status == "firing"
+    children = list(Alert.select().where(Alert.group == initial.group.id))
+    assert len(children) == 2
+    assert sum(child.status == "resolved" for child in children) == 1
+    assert sum(child.status == "firing" for child in children) == 1

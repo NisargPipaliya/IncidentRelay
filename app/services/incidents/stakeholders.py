@@ -363,6 +363,7 @@ def notify_stakeholder_added(stakeholder, group, added_by=None):
             added_by_name=added_by_name,
         ),
         push_event_type=STAKEHOLDER_ADDED_PUSH_EVENT,
+        push_context={"added_by_name": added_by_name},
     )
 
     record_participant_notification_events(

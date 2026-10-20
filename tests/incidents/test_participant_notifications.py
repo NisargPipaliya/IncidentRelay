@@ -545,3 +545,42 @@ def test_stakeholder_added_slack_text_escapes_injected_adder_name(incident):
 
     assert "<@U999EVIL>" not in text
     assert "&lt;@U999EVIL&gt;" in text
+
+
+# --- Slack channel selection respects notify_on_severities ------------------
+# Participant Slack delivery reuses the normal notification channel resolution,
+# which includes per-channel severity restrictions. A channel that excludes the
+# incident's severity must not be chosen as the participant DM transport.
+
+
+def _attach_slack_channel(incident, notify_on_severities):
+    slack_channel = create_channel(
+        incident["group"],
+        incident["team"],
+        channel_type="slack",
+        config={
+            "mode": "bot_api",
+            "bot_token": "xoxb-test",
+            "channel_id": "C1",
+            "signing_secret": "s",
+            "notify_on_severities": notify_on_severities,
+        },
+    )
+    attach_channel(incident["route"], slack_channel)
+    return slack_channel
+
+
+def test_resolve_slack_channel_skips_severity_filtered_channel(incident):
+    # incident fixture is severity "critical"; the channel only accepts warnings.
+    _attach_slack_channel(incident, ["warning"])
+
+    assert participants.resolve_slack_channel(incident["alert_group"]) is None
+
+
+def test_resolve_slack_channel_returns_matching_severity_channel(incident):
+    _attach_slack_channel(incident, ["critical"])
+
+    resolved = participants.resolve_slack_channel(incident["alert_group"])
+
+    assert resolved is not None
+    assert resolved.channel_type == "slack"

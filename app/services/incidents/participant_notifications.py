@@ -18,6 +18,7 @@ from app.modules.smtp import send_plain_email
 from app.notifiers.browser_push import service as browser_push
 from app.notifiers.registry import get_notifier
 from app.notifiers.types import SLACK_CHANNEL
+from app.services.notifications.delivery import channel_matches_alert_severity
 from app.services.notifications.policies.resolver import (
     resolve_notification_channels,
 )
@@ -133,7 +134,9 @@ def resolve_slack_channel(group):
     """Return the first usable Slack channel for an incident, or None.
 
     Reuses the normal notification channel resolution so participant messages
-    honour route and service notification policy configuration.
+    honour route and service notification policy configuration, including each
+    channel's notify_on_severities restriction: a Slack channel that excludes
+    the incident's severity is not used to deliver participant notifications.
     """
     try:
         resolution = resolve_notification_channels(group)
@@ -149,6 +152,9 @@ def resolve_slack_channel(group):
             continue
 
         if not channel.enabled:
+            continue
+
+        if not channel_matches_alert_severity(channel, group):
             continue
 
         return channel

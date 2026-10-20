@@ -8,10 +8,10 @@ from app.notifiers.browser_push import service as browser_push
 from app.notifiers.slack.mrkdwn import escape_mrkdwn
 from app.services.alerts.priority import PRIORITY_DISPLAY_LABELS, format_alert_title_with_priority, alert_priority_label
 from app.services.incidents.participant_notifications import (
+    KIND_STAKEHOLDER_ADDED,
     ParticipantRecipient,
+    enqueue_participant_notifications,
     is_notifiable_user,
-    notify_participants,
-    record_participant_notification_events,
 )
 from app.services.links import build_alert_web_url
 
@@ -353,9 +353,11 @@ def notify_stakeholder_added(stakeholder, group, added_by=None):
         added_by_name=added_by_name,
     )
 
-    result = notify_participants(
+    enqueued = enqueue_participant_notifications(
         group,
         [recipient],
+        kind=KIND_STAKEHOLDER_ADDED,
+        source_id=stakeholder.id,
         subject=subject,
         body=body,
         slack_text=build_stakeholder_added_slack_text(
@@ -366,15 +368,14 @@ def notify_stakeholder_added(stakeholder, group, added_by=None):
         push_context={"added_by_name": added_by_name},
     )
 
-    record_participant_notification_events(
-        group.id,
-        result,
-        sent_event_type="stakeholder_added_notification_sent",
-        failed_event_type="stakeholder_added_notification_failed",
-        label="Stakeholder added",
+    alerts_repo.create_alert_event(
+        group_id=group.id,
+        event_type="stakeholder_added_notification_queued",
+        message=f"Stakeholder added notification queued for delivery ({enqueued} deliveries)",
+        user_id=None,
     )
 
-    return result.as_dict()
+    return {"status": "queued", "enqueued": enqueued}
 
 
 def stakeholder_user(stakeholder):

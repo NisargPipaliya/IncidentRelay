@@ -8,10 +8,10 @@ from app.services.alerts.priority import (
     format_alert_title_with_priority,
 )
 from app.services.incidents.participant_notifications import (
+    KIND_RESPONDER,
     ParticipantRecipient,
+    enqueue_participant_notifications,
     is_notifiable_user,
-    notify_participants,
-    record_participant_notification_events,
     user_contact_email,
 )
 from app.notifiers.slack.mrkdwn import escape_mrkdwn
@@ -251,7 +251,13 @@ def _responder_recipients(responder):
 
 
 def notify_incident_responder_requested(responder):
-    """Notify a responder request over email, Slack and browser push."""
+    """Enqueue responder notifications over email, Slack and browser push.
+
+    Delivery happens asynchronously in the scheduler, so this returns once the
+    work is persisted. The responder notification status is left as ``queued``;
+    the worker records the final ``sent``/``failed`` outcome once every
+    enqueued delivery is terminal.
+    """
     recipients = _responder_recipients(responder)
 
     if not recipients:
@@ -262,9 +268,11 @@ def notify_incident_responder_requested(responder):
 
     subject, body = build_responder_notification_email(responder)
 
-    result = notify_participants(
+    enqueued = enqueue_participant_notifications(
         responder.group,
         recipients,
+        kind=KIND_RESPONDER,
+        source_id=responder.id,
         subject=subject,
         body=body,
         slack_text=build_responder_notification_slack_text(responder),
@@ -272,23 +280,17 @@ def notify_incident_responder_requested(responder):
         push_context=_responder_notification_context(responder),
     )
 
-    if result.status == "sent":
-        incidents_repo.update_incident_responder_notification(
-            responder.id,
-            status="sent",
-            error=result.error_text,
-        )
-        record_participant_notification_events(
-            responder.group_id,
-            result,
-            sent_event_type="responder_notification_sent",
-            failed_event_type="responder_notification_failed",
-            label="Responder",
-        )
-
-        return result.as_dict()
-
-    return _mark_notification_failed(
-        responder,
-        result.error_text or "no notifications were sent",
+    incidents_repo.update_incident_responder_notification(
+        responder.id,
+        status="queued",
+        error=None,
     )
+
+    alerts_repo.create_alert_event(
+        group_id=responder.group_id,
+        event_type="responder_notification_queued",
+        message=f"Responder notification queued for delivery ({enqueued} deliveries)",
+        user_id=None,
+    )
+
+    return {"status": "queued", "enqueued": enqueued}

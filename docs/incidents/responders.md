@@ -5,10 +5,9 @@ description: Request and manage additional responders for active incidents.
 
 # Incident Responders
 
-> **2.3 boundary:** responder records on this page are still attached to technical AlertGroups. Canonical first-class Incident responders are planned for the 2.5 collaboration stage.
-
-
 Incident responders are people, teams, rotations, or escalation policies explicitly requested to help with an active incident.
+
+> **Scope (IncidentRelay 2.3):** responder records on this page are **AlertGroup-scoped** — they attach to the technical alert group that backs the incident. Canonical first-class Incident responders are planned for the 2.5 collaboration stage. The responder notifications described here are technical AlertGroup notifications and are deliberately kept separate from the future operational Incident notification model.
 
 Responders are different from the incident assignee:
 
@@ -83,7 +82,7 @@ Response:
   "status": "requested",
   "message": "Please help with database checks",
   "response_message": null,
-  "notification_status": "sent",
+  "notification_status": "queued",
   "notification_error": null,
   "requested_at": "2026-06-17T10:00:00Z",
   "responded_at": null,
@@ -226,8 +225,10 @@ When a responder request is created, IncidentRelay notifies every resolved activ
 | Channel | Requirement |
 |---|---|
 | Email | The target user has an email address in their profile |
-| Slack | The target user has a Slack user ID and the incident has a Slack channel |
+| Slack | The target user has a Slack user ID and the incident has a Slack channel that accepts the incident severity |
 | Browser push | The target user has an active browser push subscription |
+
+The Slack channel is chosen using the incident's normal notification channel resolution, so a channel restricted by `notify_on_severities` is not used for a severity it excludes.
 
 The notification includes enough context to act without opening the incident first:
 
@@ -239,22 +240,18 @@ The notification includes enough context to act without opening the incident fir
 - request message;
 - link to the incident.
 
-Delivery is best-effort per channel:
+Delivery is **asynchronous and persistent**. Creating the responder request only enqueues the notifications; a background scheduler then delivers them. This keeps request handling fast even for team, rotation and escalation-policy targets that resolve to many recipients.
 
-- the request is recorded as notified when at least one channel succeeds;
-- a channel that fails is recorded as a partial failure but does not fail the request;
-- a missing browser push subscription alone no longer marks the notification as failed;
-- `notification_status` and `notification_error` describe the combined delivery result.
+- Each recipient and channel is enqueued as its own delivery, so one failing recipient or channel never blocks the others.
+- `notification_status` starts as `queued`. Once every enqueued delivery for the request has reached a terminal state, the combined outcome is recorded as `sent` or `failed`, with `notification_error` describing any per-recipient failures.
+- Transient transport errors (for example an SMTP or Slack API error) are retried with exponential backoff up to a fixed number of attempts before the delivery is marked failed.
+- Enqueuing is idempotent: a retried create request does not send duplicate notifications, because each recipient/channel delivery has a unique key.
+- A missing email address, unreachable Slack channel, or absent browser push subscription is treated as "nothing to deliver" for that channel, not as a hard failure.
+- Inactive and soft-deleted users are skipped and are not counted as delivery failures.
 
-If a resolved user has no email, no Slack user ID and no push subscription, the notification is recorded as failed with an error naming the missing contact data.
+Delivery, and any delivery failure, never prevents the responder request from being created.
 
-Inactive and soft-deleted users are skipped and are not counted as delivery failures.
-
-Delivery failure never prevents the responder request from being created.
-
-For team, rotation and escalation-policy targets, each resolved user is notified independently, so one failing recipient does not block the others.
-
-In Slack Bot API mode the notification is sent as a direct message, which needs the `im:write` scope. With an incoming-webhook Slack channel a direct message is not possible, so the message is posted to the channel with the user mentioned. See [Slack](../integrations/slack.md).
+In Slack Bot API mode the notification is sent as a private direct message, which needs the `im:write` scope. With an incoming-webhook Slack channel a direct message is not possible. To keep a responder note private it is **not** posted to the shared channel by default; delivery for that channel simply fails. A channel may opt in to posting the message in the channel (with the user mentioned) by enabling `allow_dm_channel_fallback`. See [Slack](../integrations/slack.md).
 
 ## Browser push notification
 

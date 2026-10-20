@@ -5,10 +5,9 @@ description: Incident stakeholder snapshots, lifecycle notifications and service
 
 # Incident Stakeholders
 
-> **2.3 boundary:** stakeholder records on this page are still attached to technical AlertGroups. Canonical first-class Incident stakeholders are planned for the 2.5 collaboration stage.
-
-
 Incident stakeholders are people who should stay informed about an incident without necessarily being the active responder or assignee.
+
+> **Scope (IncidentRelay 2.3):** stakeholder records on this page are **AlertGroup-scoped** — they attach to the technical alert group that backs the incident. Canonical first-class Incident stakeholders are planned for the 2.5 collaboration stage. The stakeholder notifications described here are technical AlertGroup notifications and are deliberately kept separate from the future operational Incident notification model.
 
 Stakeholders are useful for:
 
@@ -51,10 +50,10 @@ Scope and behavior:
 - only manually added stakeholders are notified. Stakeholders created automatically from service default stakeholders are not notified on add, so incident creation does not fan out a burst of notifications;
 - a user who adds themselves as a stakeholder is not notified;
 - a stakeholder added by email address only, with no linked IncidentRelay user, is notified by email only. Slack and browser push are not attempted because there is no profile to look up;
-- delivery is best-effort: the notification counts as sent when at least one channel succeeds, and per-channel failures are recorded in the incident timeline;
+- delivery is asynchronous and persistent: adding the stakeholder enqueues the notification, and a background scheduler delivers it with retries for transient failures. Each channel is tracked independently, so one channel failing does not hide another succeeding;
 - a notification failure never prevents the stakeholder from being added.
 
-Timeline events `stakeholder_added_notification_sent` and `stakeholder_added_notification_failed` record the outcome, including which channels succeeded and any per-channel errors.
+Timeline events `stakeholder_added_notification_queued`, `stakeholder_added_notification_sent` and `stakeholder_added_notification_failed` record the outcome, including which channels succeeded and any per-channel failures.
 
 This event is separate from the lifecycle notifications above and is not controlled by the `notify_on_*` flags.
 
@@ -65,10 +64,10 @@ Stakeholder notifications are informational.
 They can be delivered through:
 
 - email, when the stakeholder has an email address;
-- Slack, when the stakeholder is an active IncidentRelay user with a Slack user ID and the incident has a Slack channel;
+- Slack, when the stakeholder is an active IncidentRelay user with a Slack user ID and the incident has a Slack channel that accepts the incident severity;
 - browser push, when the stakeholder is an active IncidentRelay user with browser push enabled.
 
-In Slack Bot API mode the added-as-stakeholder notification is sent as a direct message, which needs the `im:write` scope. With an incoming-webhook Slack channel the message is posted to the configured channel with the user mentioned instead. See [Slack](../integrations/slack.md).
+In Slack Bot API mode the added-as-stakeholder notification is sent as a private direct message, which needs the `im:write` scope. With an incoming-webhook Slack channel a direct message is not possible, and the message is **not** posted to the shared channel by default, to keep the notification private; a channel may opt in with `allow_dm_channel_fallback`. See [Slack](../integrations/slack.md).
 
 Stakeholder browser push notifications do not include ACK, Resolve, Shelve or Unshelve action buttons.
 

@@ -230,8 +230,8 @@ For a step-by-step setup guide, including how to find Slack user IDs and how par
 
 When a user is added to an incident as a responder or stakeholder, IncidentRelay can notify them through Slack.
 
-- In **Bot API mode**, the notification is sent as a direct message. This calls `conversations.open` followed by `chat.postMessage` and requires the `im:write` scope in addition to `chat:write`.
-- In **incoming-webhook mode**, direct messages are not possible. The notification is posted to the configured channel with the user mentioned instead, so it is visible to the whole channel.
+- In **Bot API mode**, the notification is sent as a private direct message. This calls `conversations.open` followed by `chat.postMessage` and requires the `im:write` scope in addition to `chat:write`.
+- In **incoming-webhook mode**, direct messages are not possible. By default the note is **not** posted to the shared channel, so a message meant for one recipient stays private and Slack delivery for that recipient simply fails. Enable `allow_dm_channel_fallback` on the channel to post it in the channel with the user mentioned instead, which makes it visible to the whole channel.
 
 Use Bot API mode if participant notifications must stay private.
 

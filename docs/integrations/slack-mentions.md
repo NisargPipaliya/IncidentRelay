@@ -178,6 +178,8 @@ A Slack user ID is validated against the expected Slack format before it is inse
 
 When a user is added to an incident, they are notified so that being pulled in does not go unnoticed.
 
+> **Scope (IncidentRelay 2.3):** responder and stakeholder participant notifications are **AlertGroup-scoped** technical notifications. Canonical first-class Incident collaboration is planned for 2.5 and is kept separate from these.
+
 | Event | Trigger |
 |---|---|
 | Responder added | A responder request targets a user, team, rotation or escalation policy |
@@ -188,33 +190,36 @@ When a user is added to an incident, they are notified so that being pulled in d
 | Channel | Requirement |
 |---|---|
 | Email | The user has an email address in their profile |
-| Slack | The user has a Slack user ID and the incident has a Slack channel |
+| Slack | The user has a Slack user ID and the incident has a Slack channel that accepts the incident severity |
 | Browser push | The user has an active browser push subscription |
+
+The Slack channel is selected with the incident's normal notification channel resolution, so a channel restricted by `notify_on_severities` is skipped for a severity it excludes.
 
 ### Slack delivery mode
 
-- **Bot API mode**: sent as a direct message using `conversations.open` followed by `chat.postMessage`. This requires the `im:write` scope in addition to `chat:write`.
-- **Incoming webhook mode**: a direct message is not possible, so the notification is posted to the configured channel with the user mentioned. The message is therefore visible to the whole channel.
+- **Bot API mode**: sent as a private direct message using `conversations.open` followed by `chat.postMessage`. This requires the `im:write` scope in addition to `chat:write`.
+- **Incoming webhook mode**: a direct message is not possible. To keep the note private it is **not** posted to the shared channel by default — Slack delivery for that recipient simply fails. Enable `allow_dm_channel_fallback` on the channel to post the message in the channel (with the user mentioned) instead; the message is then visible to the whole channel.
 
 Use Bot API mode if participant notifications must stay private.
 
-### Best-effort delivery
+### Asynchronous, retryable delivery
 
-Delivery is evaluated per channel:
+Adding a responder or stakeholder only **enqueues** the notifications; a background scheduler delivers them. Each recipient and channel is a separate persisted delivery:
 
-- the notification is recorded as **sent** when at least one channel succeeds;
-- it is recorded as **failed** only when every channel fails;
-- per-channel errors are recorded even on success, so a misconfigured channel stays visible;
-- a missing browser push subscription alone no longer marks the notification as failed;
+- `notification_status` starts as `queued` and becomes `sent` or `failed` once every enqueued delivery for the request is terminal;
+- one recipient's success does not hide another's failure — partial failures are recorded per recipient;
+- transient transport errors are retried with exponential backoff up to a fixed number of attempts;
+- enqueuing is idempotent, so a retried request does not send duplicates;
+- a missing email address, unreachable Slack channel or absent push subscription is a skip, not a hard failure;
 - inactive and soft-deleted users are skipped and are not counted as failures;
-- a notification failure never prevents the responder request or stakeholder from being created.
+- delivery, and any delivery failure, never prevents the responder request or stakeholder from being created.
 
 Example of a successful responder notification that still records a partial failure:
 
 ```json
 {
   "notification_status": "sent",
-  "notification_error": "Ivan (slack): no Slack channel configured for this incident; Ivan (browser_push): no active push subscriptions"
+  "notification_error": "Ivan (slack): no Slack channel configured for this incident"
 }
 ```
 
@@ -235,8 +240,10 @@ Every participant notification writes a timeline event on the incident:
 
 | Event type | Meaning |
 |---|---|
+| `responder_notification_queued` | The responder notifications were enqueued for delivery |
 | `responder_notification_sent` | Delivered on at least one channel; lists the channels and any partial failures |
 | `responder_notification_failed` | Every channel failed; includes the per-channel error text |
+| `stakeholder_added_notification_queued` | The stakeholder-added notification was enqueued for delivery |
 | `stakeholder_added_notification_sent` | Delivered on at least one channel |
 | `stakeholder_added_notification_failed` | Every channel failed |
 

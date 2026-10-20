@@ -4,6 +4,7 @@ import re
 import requests
 
 from app.notifiers.plugins import IncomingWebhookNotifier, alert_service_label
+from app.notifiers.slack.mrkdwn import escape_mrkdwn
 from app.notifiers.types import (
     SLACK_MENTION_ASSIGNEE_KEY,
     SLACK_MENTION_ONCALL_KEY,
@@ -787,12 +788,7 @@ class SlackNotifier(IncomingWebhookNotifier):
     @staticmethod
     def _escape_text(value):
         """Escape dynamic text for Slack mrkdwn."""
-        return (
-            str(value)
-            .replace("&", "&amp;")
-            .replace("<", "&lt;")
-            .replace(">", "&gt;")
-        )
+        return escape_mrkdwn(value)
 
     @staticmethod
     def _escape_link_label(value):

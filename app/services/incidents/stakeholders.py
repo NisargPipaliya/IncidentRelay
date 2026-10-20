@@ -5,6 +5,7 @@ from app.modules.db import incidents_repo, alerts_repo
 from app.modules.db.models import User
 from app.modules.smtp import send_plain_email
 from app.notifiers.browser_push import service as browser_push
+from app.notifiers.slack.mrkdwn import escape_mrkdwn
 from app.services.alerts.priority import PRIORITY_DISPLAY_LABELS, format_alert_title_with_priority, alert_priority_label
 from app.services.incidents.participant_notifications import (
     ParticipantRecipient,
@@ -292,13 +293,19 @@ def build_stakeholder_added_email(group, added_by_name=None):
 
 
 def build_stakeholder_added_slack_text(group, added_by_name=None):
-    """Build the Slack message text for a stakeholder addition."""
+    """Build the Slack message text for a stakeholder addition.
+
+    The incident title and the adder's name are escaped for Slack mrkdwn so an
+    injected ``<!channel>``/``<!here>``/``<@U...>`` renders as literal text
+    instead of a real broadcast or mention.
+    """
     alert_url = build_alert_web_url(group)
 
-    who = f" by {added_by_name}" if added_by_name else ""
+    title = escape_mrkdwn(format_alert_title_with_priority(group))
+    who = f" by {escape_mrkdwn(added_by_name)}" if added_by_name else ""
     text = (
         "You were added as a stakeholder to "
-        f"*{format_alert_title_with_priority(group)}*{who}."
+        f"*{title}*{who}."
     )
 
     if alert_url:

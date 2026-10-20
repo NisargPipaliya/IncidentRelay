@@ -496,3 +496,52 @@ def test_stakeholder_added_writes_alert_event(
 
     assert len(events) == 1
     assert "email" in events[0].message
+
+
+# --- Slack mrkdwn escaping of participant message content -------------------
+# Responder/stakeholder Slack text interpolates alert titles, display names and
+# free-text messages. Unescaped, an injected <!channel>/<!here>/<@U...> would be
+# rendered by Slack as a real broadcast or mention. The deliberate direct-message
+# target mention is added separately by the notifier, so the builder output must
+# contain no live Slack control sequences.
+
+
+def test_responder_slack_text_escapes_injected_broadcast(incident):
+    user = create_user(group=incident["group"])
+    responder = make_responder(
+        incident["alert_group"],
+        user,
+        message="<!channel> everyone look",
+    )
+
+    text = responder_notifications.build_responder_notification_slack_text(
+        responder
+    )
+
+    assert "<!channel>" not in text
+    assert "&lt;!channel&gt;" in text
+
+
+def test_responder_slack_text_escapes_injected_title(incident):
+    group = incident["alert_group"]
+    group.title = "<!here> DiskFull"
+    group.save()
+    user = create_user(group=incident["group"])
+    responder = make_responder(group, user)
+
+    text = responder_notifications.build_responder_notification_slack_text(
+        responder
+    )
+
+    assert "<!here>" not in text
+    assert "&lt;!here&gt;" in text
+
+
+def test_stakeholder_added_slack_text_escapes_injected_adder_name(incident):
+    text = stakeholders.build_stakeholder_added_slack_text(
+        incident["alert_group"],
+        added_by_name="<@U999EVIL>",
+    )
+
+    assert "<@U999EVIL>" not in text
+    assert "&lt;@U999EVIL&gt;" in text

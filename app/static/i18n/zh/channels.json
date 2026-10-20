@@ -162,6 +162,8 @@
   "channels.slack.mention_assignee_help": "将负责人渲染为 Slack 提及。若该用户没有 Slack 用户 ID，则回退为显示名称。",
   "channels.slack.mention_oncall": "提及当前值班人员",
   "channels.slack.mention_oncall_help": "在发送消息时解析值班人员，因此提醒和升级会提醒当时真正值班的人。",
+  "channels.slack.allow_dm_channel_fallback": "允许私信回退到频道",
+  "channels.slack.allow_dm_channel_fallback_help": "当未配置 Bot API 模式时，无法以私密方式向响应者或干系人发送私信。默认关闭，个人通知绝不会发布到共享频道；启用后会在频道中发布并提及接收者。",
   "channels.config.bot_http_ready": "Bot API 已配置 HTTP 交互操作",
   "channels.config.bot_socket_ready": "Bot API 已配置 Socket Mode",
   "channels.email.recipient_mode": "收件人模式",

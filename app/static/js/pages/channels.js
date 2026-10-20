@@ -140,6 +140,15 @@ function applySlackMentionConfig(config) {
         delete config.mention_oncall;
     }
 
+    // Channel fallback for direct messages is off unless explicitly enabled, so
+    // a personal responder/stakeholder note is never posted to the shared
+    // channel by default.
+    if ($("#cfg-slack-allow-dm-channel-fallback").is(":checked")) {
+        config.allow_dm_channel_fallback = true;
+    } else {
+        delete config.allow_dm_channel_fallback;
+    }
+
     return config;
 }
 
@@ -671,6 +680,10 @@ function fillChannelFields(type, config) {
             "checked",
             config.mention_oncall === true
         );
+        $("#cfg-slack-allow-dm-channel-fallback").prop(
+            "checked",
+            config.allow_dm_channel_fallback === true
+        );
 
         showSlackModeFields();
     }
@@ -714,6 +727,7 @@ function clearChannelFields() {
     $("#cfg-lark-signing-secret").val("");
     $("#cfg-slack-mention-assignee").prop("checked", false);
     $("#cfg-slack-mention-oncall").prop("checked", false);
+    $("#cfg-slack-allow-dm-channel-fallback").prop("checked", false);
     $("#cfg-email-recipient-mode").val("assignee");
     $("#cfg-email-recipient-email").val("");
 

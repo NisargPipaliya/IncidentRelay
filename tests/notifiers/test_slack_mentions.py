@@ -506,7 +506,7 @@ def test_direct_message_fails_when_conversation_not_returned(monkeypatch):
     assert "direct channel id was not returned" in str(exc.value)
 
 
-def test_webhook_only_channel_falls_back_to_channel_mention(monkeypatch):
+def test_webhook_only_channel_falls_back_only_when_opted_in(monkeypatch):
     notifier = SlackNotifier()
     sent = {}
 
@@ -522,6 +522,7 @@ def test_webhook_only_channel_falls_back_to_channel_mention(monkeypatch):
         make_channel({
             "mode": "webhook",
             "webhook_url": "https://hooks.slack.com/services/T/B/x",
+            "allow_dm_channel_fallback": True,
         }),
         make_user(),
         "You were added as a responder",
@@ -531,6 +532,33 @@ def test_webhook_only_channel_falls_back_to_channel_mention(monkeypatch):
     assert sent["json"]["text"] == (
         "<@U012ABCDEF> You were added as a responder"
     )
+
+
+def test_webhook_only_channel_does_not_fall_back_without_opt_in(monkeypatch):
+    """A personal responder/stakeholder note must never be posted to the
+    shared channel unless channel fallback is explicitly enabled, because the
+    note may contain information intended only for one recipient."""
+    notifier = SlackNotifier()
+    posted = []
+
+    monkeypatch.setattr(
+        "app.notifiers.slack.notifier.safe_request",
+        lambda method, url, **kwargs: posted.append({"url": url, **kwargs})
+        or SimpleNamespace(raise_for_status=lambda: None),
+    )
+
+    with pytest.raises(RuntimeError) as exc:
+        notifier.send_direct_message(
+            make_channel({
+                "mode": "webhook",
+                "webhook_url": "https://hooks.slack.com/services/T/B/x",
+            }),
+            make_user(),
+            "private responder note",
+        )
+
+    assert "channel fallback" in str(exc.value).lower()
+    assert posted == []
 
 
 def test_direct_message_without_any_transport_raises():

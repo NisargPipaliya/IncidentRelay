@@ -162,6 +162,8 @@
   "channels.slack.mention_assignee_help": "Renders the assignee as a Slack mention. Falls back to the display name when the user has no Slack user ID.",
   "channels.slack.mention_oncall": "Mention the current on-call user",
   "channels.slack.mention_oncall_help": "Resolves the on-call user when the message is sent, so reminders and escalations ping whoever is on call at that moment.",
+  "channels.slack.allow_dm_channel_fallback": "Allow channel fallback for direct messages",
+  "channels.slack.allow_dm_channel_fallback_help": "When Bot API mode is not configured, a direct message to a responder or stakeholder cannot be delivered privately. Off by default so personal notifications are never posted to the shared channel; enable to post them in the channel with the recipient mentioned instead.",
   "channels.config.bot_http_ready": "Bot API configured with HTTP actions",
   "channels.config.bot_socket_ready": "Bot API configured with Socket Mode",
   "channels.email.recipient_mode": "Recipient mode",

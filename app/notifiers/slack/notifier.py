@@ -6,6 +6,7 @@ import requests
 from app.notifiers.plugins import IncomingWebhookNotifier, alert_service_label
 from app.notifiers.slack.mrkdwn import escape_mrkdwn
 from app.notifiers.types import (
+    SLACK_ALLOW_DM_CHANNEL_FALLBACK_KEY,
     SLACK_MENTION_ASSIGNEE_KEY,
     SLACK_MENTION_ONCALL_KEY,
 )
@@ -224,8 +225,11 @@ class SlackNotifier(IncomingWebhookNotifier):
 
         Prefers a direct message via ``conversations.open`` + ``chat.postMessage``,
         which needs Bot API mode and the ``im:write`` scope. When only an
-        incoming webhook is configured a DM is impossible, so the message is
-        posted to the configured channel with the user mentioned instead.
+        incoming webhook is configured a true DM is impossible. Because the
+        message may hold information meant for a single recipient, it is NOT
+        posted to the shared channel unless the channel explicitly opts in with
+        ``allow_dm_channel_fallback``; otherwise delivery fails and the message
+        stays private.
         """
         config = channel.config or {}
         slack_user_id = self._slack_user_id(user)
@@ -236,11 +240,20 @@ class SlackNotifier(IncomingWebhookNotifier):
             )
 
         if not self._bot_api_ready(config):
-            return self._send_channel_fallback_message(
-                channel,
-                slack_user_id,
-                text,
-                blocks=blocks,
+            if self._dm_channel_fallback_enabled(config):
+                return self._send_channel_fallback_message(
+                    channel,
+                    slack_user_id,
+                    text,
+                    blocks=blocks,
+                )
+
+            raise RuntimeError(
+                "Slack direct message requires Bot API mode "
+                "(bot_token and channel_id). Channel fallback is disabled to "
+                "keep personal notifications private; set "
+                "allow_dm_channel_fallback on the channel to post to the "
+                "shared channel instead."
             )
 
         conversation = self._request(
@@ -387,6 +400,15 @@ class SlackNotifier(IncomingWebhookNotifier):
             return bool(config.get("app_token"))
 
         return bool(config.get("signing_secret"))
+
+    @staticmethod
+    def _dm_channel_fallback_enabled(config):
+        """Return whether posting a DM to the shared channel is opted in.
+
+        Only an explicit boolean True enables the fallback, so a channel with
+        no such config never leaks a personal message to the channel.
+        """
+        return (config or {}).get(SLACK_ALLOW_DM_CHANNEL_FALLBACK_KEY) is True
 
     @staticmethod
     def _mentions_enabled(config, key):

@@ -41,3 +41,13 @@ SLACK_MENTION_CONFIG_KEYS = (
     SLACK_MENTION_ASSIGNEE_KEY,
     SLACK_MENTION_ONCALL_KEY,
 )
+
+# Direct messages to a responder/stakeholder are delivered privately through the
+# Slack Bot API. When only an incoming webhook is configured a true DM is
+# impossible; posting to the shared channel instead can expose a personal note,
+# so that fallback is opt-in per channel and defaults to off.
+SLACK_ALLOW_DM_CHANNEL_FALLBACK_KEY = "allow_dm_channel_fallback"
+
+SLACK_BOOLEAN_CONFIG_KEYS = SLACK_MENTION_CONFIG_KEYS + (
+    SLACK_ALLOW_DM_CHANNEL_FALLBACK_KEY,
+)

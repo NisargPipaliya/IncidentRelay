@@ -162,6 +162,8 @@
   "channels.slack.mention_assignee_help": "Affiche la personne assignée sous forme de mention Slack. Utilise le nom affiché si l'utilisateur n'a pas d'identifiant Slack.",
   "channels.slack.mention_oncall": "Mentionner la personne d'astreinte actuelle",
   "channels.slack.mention_oncall_help": "Détermine la personne d'astreinte à l'envoi du message, afin que les rappels et escalades notifient celle qui est d'astreinte à ce moment-là.",
+  "channels.slack.allow_dm_channel_fallback": "Autoriser le repli vers le canal pour les messages directs",
+  "channels.slack.allow_dm_channel_fallback_help": "Lorsque le mode API du bot n'est pas configuré, un message direct à un intervenant ou une partie prenante ne peut pas être remis en privé. Désactivé par défaut pour que les notifications personnelles ne soient jamais publiées dans le canal partagé ; activez-le pour les publier dans le canal en mentionnant le destinataire.",
   "channels.config.bot_http_ready": "API du bot configurée avec des actions HTTP",
   "channels.config.bot_socket_ready": "API du bot configurée avec le mode Socket",
   "channels.email.recipient_mode": "Mode de destinataire",

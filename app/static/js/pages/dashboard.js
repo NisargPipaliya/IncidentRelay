@@ -760,9 +760,9 @@ function fetchDashboardData() {
         }
     }
 
-    // /api/alerts (not /api/alert-groups) is the endpoint that understands the
+    // /api/alert-groups is the alert-group list endpoint; it understands the
     // involvement / team_id / service_id filters added by this feature.
-    apiGet("/api/alerts?" + params.join("&"), function (response) {
+    apiGet("/api/alert-groups?" + params.join("&"), function (response) {
         if (generation !== dashboardLoadGeneration) {
             return;
         }

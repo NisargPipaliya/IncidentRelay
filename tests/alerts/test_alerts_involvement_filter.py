@@ -156,9 +156,9 @@ def test_api_involvement_and_legacy_alias(client, admin_user, admin_headers):
     create_incident_stakeholder(stakeholder, admin_user)
     _alert_group(team, "api-unrelated")
 
-    assigned = _api_ids(client.get("/api/alerts?involvement=assigned", headers=admin_headers))
-    legacy = _api_ids(client.get("/api/alerts?assigned_to_me=true", headers=admin_headers))
-    any_ids = _api_ids(client.get("/api/alerts?involvement=any", headers=admin_headers))
+    assigned = _api_ids(client.get("/api/alert-groups?involvement=assigned", headers=admin_headers))
+    legacy = _api_ids(client.get("/api/alert-groups?assigned_to_me=true", headers=admin_headers))
+    any_ids = _api_ids(client.get("/api/alert-groups?involvement=any", headers=admin_headers))
 
     assert assigned == {mine.id}
     assert legacy == assigned
@@ -166,7 +166,7 @@ def test_api_involvement_and_legacy_alias(client, admin_user, admin_headers):
 
 
 def test_api_invalid_involvement_is_rejected(client, admin_headers):
-    response = client.get("/api/alerts?involvement=owner", headers=admin_headers)
+    response = client.get("/api/alert-groups?involvement=owner", headers=admin_headers)
 
     assert response.status_code == 400
 
@@ -184,7 +184,7 @@ def test_api_involvement_never_widens_team_scope(client):
     create_incident_stakeholder(invisible, user)
 
     ids = _api_ids(
-        client.get("/api/alerts?involvement=stakeholder", headers=_headers(user))
+        client.get("/api/alert-groups?involvement=stakeholder", headers=_headers(user))
     )
 
     assert ids == {visible.id}
@@ -202,11 +202,11 @@ def test_api_multiple_team_ids(client, admin_headers):
 
     both = _api_ids(
         client.get(
-            f"/api/alerts?team_id={team_a.id}&team_id={team_b.id}",
+            f"/api/alert-groups?team_id={team_a.id}&team_id={team_b.id}",
             headers=admin_headers,
         )
     )
-    single = _api_ids(client.get(f"/api/alerts?team_id={team_a.id}", headers=admin_headers))
+    single = _api_ids(client.get(f"/api/alert-groups?team_id={team_a.id}", headers=admin_headers))
 
     assert both == {a.id, b.id}
     assert single == {a.id}
@@ -219,9 +219,9 @@ def test_api_multiple_team_ids_rejects_unreadable_team(client):
     user = create_user(group=group, group_role="viewer")
     add_user_to_team(readable, user, role="responder")
 
-    ok = client.get(f"/api/alerts?team_id={readable.id}", headers=_headers(user))
+    ok = client.get(f"/api/alert-groups?team_id={readable.id}", headers=_headers(user))
     denied = client.get(
-        f"/api/alerts?team_id={readable.id}&team_id={hidden.id}",
+        f"/api/alert-groups?team_id={readable.id}&team_id={hidden.id}",
         headers=_headers(user),
     )
 
@@ -230,6 +230,6 @@ def test_api_multiple_team_ids_rejects_unreadable_team(client):
 
 
 def test_api_team_id_must_be_positive(client, admin_headers):
-    response = client.get("/api/alerts?team_id=0", headers=admin_headers)
+    response = client.get("/api/alert-groups?team_id=0", headers=admin_headers)
 
     assert response.status_code == 400

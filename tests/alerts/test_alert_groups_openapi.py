@@ -116,7 +116,7 @@ def test_openapi_alert_group_detail_exposes_event_pagination():
 def test_openapi_alerts_list_documents_involvement_and_team_ids():
     spec = build_openapi_spec()
 
-    operation = spec["paths"]["/api/alerts"]["get"]
+    operation = spec["paths"]["/api/alert-groups"]["get"]
     params = {param["name"]: param for param in operation["parameters"]}
 
     assert params["involvement"]["schema"]["enum"] == [
